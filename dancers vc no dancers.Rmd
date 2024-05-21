@@ -1,0 +1,1288 @@
+---
+title: "dancers vs no-dancers"
+author: "Datapsy1979"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE,}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(caret)
+library(tidyverse)
+library(ggplot2)
+library(openxlsx)
+library(dplyr)
+library(factoextra)
+library(FactoMineR)
+library(dplyr)
+library(lessR)
+library(corrplot)
+library(purrr)
+library(stats)
+library(broom)
+library(rstatix)
+library(easystats)
+library(performance)
+library(boot)
+library(knitr)
+library(gridExtra)
+library(tibble)
+```
+
+```{r data cleaning, include=FALSE}
+tesi <- read_excel("C:/Users/Windows/Documents/tesi/dataset/dataset completo.xlsx")
+#verifica valori mancanti
+is.na(tesi)  #valori booleani per valori mancanti
+colSums(is.na(tesi)) #valori mancanti in ciascuna feature
+sum(is.na(tesi)) #totale valori mancanti
+
+#esiste un errore di sintassi, sostituisco tutti i ismboli "_" con "."
+colnames(tesi)<-sub("_", ".",colnames(tesi))
+
+#converto tutto il testo del data frame in minuscolo
+tesi <- data.frame(lapply(tesi, function(x) {
+  if (is.character(x)) {
+    x <- tolower(x)
+  }
+  return(x)
+}))
+
+#rinomino le colonne PSS_T1...35 e SS_T1...36
+names(tesi)[names(tesi) == "PSS_T1...33"] <- "PSST1"
+names(tesi)[names(tesi) == "PSS_T1...34"] <- "PSS_T1"
+
+#sostituisco i valori "no" in specifiche colonne
+#e le trasformo in numeriche
+tesi$Da.quanti.anni.balla. <- as.numeric(replace(tesi$Da.quanti.anni.balla., tesi$Da.quanti.anni.balla. == "no", 0))
+tesi$A.che.età.ha.iniziato.a.ballare. <-as.numeric(replace(tesi$A.che.età.ha.iniziato.a.ballare. , tesi$A.che.età.ha.iniziato.a.ballare. =="no", 0))
+tesi$Quante.ore.a.settimana.si.allena.<-as.numeric(replace(tesi$Quante.ore.a.settimana.si.allena., tesi$Quante.ore.a.settimana.si.allena.=="no", 0))
+
+#sostituisco 0 con "no" 
+tesi$Ha.studiato.danza.per.almeno.10.anni.[tesi$Ha.studiato.danza.per.almeno.10.anni. == 0] <- "no"
+tesi$Quale.stile.di.danza.pratica.[tesi$Quale.stile.di.danza.pratica.== "no"]<-"nessuno"
+```
+
+```{r verifica livelli variabili numeriche, include=FALSE}
+# Convert numeric variables with number of levels < 5 into factors
+num_vars <- sapply(tesi, is.numeric)
+df_numeric <- tesi[, num_vars]
+
+# Identify numeric variables with number of levels < 5
+to_convert <- sapply(df_numeric, function(x) length(unique(x))) <= 5
+to_convert["totale_eventi_stressanti_vita"] <- FALSE  # Ensure this variable is not converted
+
+# Convert these variables to factors
+tesi[, names(to_convert)[to_convert]] <- lapply(tesi[, names(to_convert)[to_convert]], as.factor)
+
+# Count how many variables were converted
+sum(to_convert)
+# List the names of the converted variables
+converted_vars <- names(to_convert)[to_convert]
+converted_vars
+
+```
+```{r trasformazione variabili categoriali, imclude=FALSE}
+#trasfromo tutte le colonne categoriali  in fattori
+df<-tesi
+df[, sapply(df, is.character)] <- lapply(df[, sapply(df, is.character)], as.factor)
+
+
+```
+```{r creazione subset specifici, include=FALSE}
+#subset con solo colonne categoriali, escludendo tutte quelle che hanno livello uno
+df_cat <- df[, sapply(df, function(x) is.factor(x) && length(levels(x)) > 1)]
+#subest delle colonne numeriche mantenendo solo la variabile GRUPPO (categorica)
+df_num<- df[c(1, which(sapply(df, is.numeric)))]
+
+```
+
+```{r scrittura file xlsx dei subset, include=FALSE}
+write.xlsx(x = df_num, file = "./dataset numerico gruppo.xlsx") 
+write.xlsx(x = df, file = "./dataset completo.xlsx")
+write.xlsx(x=df_cat, file = "./dataset categorico.xlsx")
+
+
+```
+
+
+
+```{r PCA, include=TRUE}
+# PCA solo su variabili numeriche
+numeric_vars <- df %>% select(where(is.numeric))
+pca_result <- PCA(numeric_vars, graph = FALSE)
+#verifcio che la variabile GRUPPO sia un fattore e che coincida con il numero
+#di righe presente in numeric_vars
+gruppo_factor <- factor(df$GRUPPO[1:nrow(numeric_vars)])
+# garfico PCA prendendo la variabile GRUPPO per l'habillage
+pca_plot <- fviz_pca_ind(pca_result,
+                         habillage = gruppo_factor, # color by 'gruppo'
+                         addEllipses = TRUE, # Add confidence ellipses
+                         ellipse.level = 0.95) # Confidence level for ellipses
+print(pca_plot)
+```
+
+
+
+```{r Test di Fisher, include=FALSE}
+storage = vector(mode="list", length = ncol(df_cat)-1)
+variables = names(df_cat)
+
+for (i in 1:length(storage)) {
+  y = variables[i + 1]
+  print(paste("Working on", y, "at position", i))
+  formula = paste("~ GRUPPO +",variables[i+1])
+   storage[[i]] = df_cat %>% 
+    dplyr::select(GRUPPO, variables[i +1]) %>% 
+    xtabs(formula = formula) %>% 
+    fisher.test() %>% 
+    broom::tidy() %>% #trasforma output dati statistici in data frame
+    mutate(variable = y, .before = everything())
+  
+  names(storage)[i] = y
+}
+
+result = storage %>% 
+  reduce(bind_rows)
+# Order results by ascending p-value
+result <- result %>% 
+  arrange(p.value)
+result
+#salva come file xlsx
+write.xlsx(x = result, file = "./fisher result.xlsx")
+
+```
+
+
+
+
+```{r grafici variabili categoriche significative, include=TRUE}
+#estraggo le osservazioni significative
+significant_rows<-result[result$p.value<=0.05, ]
+significant_row_names<-significant_rows$variable
+significant_row_names
+cat_var<-as.vector(significant_row_names) #trasformo in un vettroe
+
+# scelta delle variabili di interesse
+for (var in cat_var) {
+  print(table(df[var]))
+  plot_title <- paste("GRUPPO vs", var)
+  plot_data <- df[, c(var, "GRUPPO")]
+  p <- ggplot(plot_data, aes_string(x = var, fill= "GRUPPO")) +
+    geom_bar(position = "dodge") +
+    labs(title = plot_title)
+  # Add significance levels
+      geom_text(data = subset(significant_rows, variable == var),
+              aes(label = ifelse(p.value <= 0.001, "***",
+                                 ifelse(p.value <= 0.01, "**",
+                                        ifelse(p.value <= 0.05, "*", ""))),
+                  y = after_stat(count)),
+                     stat = "count", vjust = -1.5)
+  print(p)
+}
+?geom_text
+```
+```{r grafici test Fisher, include=TRUE}
+for (var in cat_var) {
+  print(table(df_cat[[var]]))
+  
+  plot_title <- paste("GRUPPO vs", var)
+  plot_data <- df_cat[, c(var, "GRUPPO")]
+  
+  # Determine significance level for subtitle
+  significance_level <- ifelse(significant_rows$p.value[significant_rows$variable == var] <= 0.001, "***",
+                               ifelse(significant_rows$p.value[significant_rows$variable == var] <= 0.01, "**",
+                                      ifelse(significant_rows$p.value[significant_rows$variable == var] <= 0.05, "*", "ns")))
+  subtitle_text <- paste("Significatività:", significance_level)
+  
+  p <- ggplot(plot_data, aes_string(x = var, fill = "GRUPPO")) +
+    geom_bar(position = "dodge") +
+    labs(title = plot_title, subtitle = subtitle_text)
+  theme(
+      plot.background = element_rect(fill = "white", color = NA),
+      panel.background = element_rect(fill = "white", color = "black"),
+      panel.grid.major = element_line(color = "black"),
+      panel.grid.minor = element_line(color = "black")
+    )
+  
+  ggsave(filename = paste0(var, "_barplot.png"), plot = p, bg = "white")
+  
+  print(p)
+  
+}
+```
+
+
+```{r test Wilcoxon, include=TRUE}
+# La variabile GRUPPO rimane fattore
+
+results <- list()
+
+variables <- names(df_num)[-which(names(df_num) == "GRUPPO")]  #esclusione di 
+#GRUPPO dalle variabili
+for (var_name in variables) {
+  test_result <- wilcox.test(df_num[[var_name]] ~ df_num$GRUPPO, data = df, exact = FALSE)
+  results[[var_name]] <- broom::tidy(test_result) %>% mutate(variable = var_name)
+}
+
+#creazione di una matrice dei risultati
+combined_results <- bind_rows(results)
+combined_results
+#ordina per valori crescenti e copia in xlsx
+# Order results by ascending p-value
+combined_results <- combined_results%>% 
+  arrange(p.value)
+#salva come file xlsx
+write.xlsx(x = combined_results, file = "./Wilcoxon result.xlsx")
+```
+
+```{r boxplot wilcoxon}
+significant_results <- combined_results %>%
+  filter(p.value <= 0.05) %>%
+  select(variable, p.value)
+
+# Extracting the names of significant variables
+significant_variables <- significant_results$variable
+
+# Loop through each significant variable and create a boxplot
+for (var_name in significant_variables) {
+  print(var_name)
+  p_value <- significant_results$p.value[significant_results$variable == var_name]
+  significance <- ifelse(p_value < 0.001, "***",
+                         ifelse(p_value < 0.01, "**", "*"))
+  plot_title2 <- paste("GRUPPO vs", var_name)
+  p <- ggplot(df, aes_string(x = 'GRUPPO', y = var_name)) +
+    geom_boxplot() +
+    coord_flip() +
+    labs(y = var_name, x = "GRUPPO", title = plot_title2, subtitle = paste("p-value:", signif(p_value, digits = 2), significance)) +
+    theme_minimal() +
+    theme(
+      plot.background = element_rect(fill = "white", colour = "NA"), # Set plot background to white
+      panel.background = element_rect(fill = "white", colour = "black"), # Set panel background to white with black border
+      text = element_text(colour = "black") # Set text color to black for legibility
+    )
+  
+  # Save the plot as a PNG file with a white background and black lines
+  ggsave(filename = paste0("boxplot_", var_name, ".png"), plot = p, device = "png", bg = "white")
+  print(p)
+}
+```
+
+
+```{r verifica multicollinearità, include=FALSE}
+
+
+# Assuming df is the data frame provided
+numeric_vars <- names(df)[sapply(df, is.numeric)]
+
+# Create a data frame with only numeric variables
+df_numeric <- df[, numeric_vars]
+
+# Calculate the correlation matrix
+cor_matrix <- cor(df_numeric)
+
+# Find highly correlated pairs
+high_cor <- findCorrelation(cor_matrix, cutoff = 0.8, verbose = FALSE)
+class(high_cor)
+corrplot(cor_matrix)
+high_cor
+# Remove highly correlated variables
+dnm <- df_numeric[, -high_cor]
+dnm
+```
+
+
+```{r regressione logistica, include=TRUE}
+# Convert categorical variables to factors and ensure they have at least two levels
+dflog <- df_cat[sapply(df_cat, function(x) !(is.factor(x) && length(levels(x)) < 2))]
+
+# Convert remaining categorical variables to factors
+categorical_vars <- sapply(df_cat, is.character)
+df[categorical_vars] <- lapply(df_cat[categorical_vars], factor)
+
+# Logistic regression to predict the 'gruppo' variable using the df data frame
+logistic_model <- glm(GRUPPO ~ ., data = dflog, family = binomial)
+
+# Summary of the logistic regression model
+summary(logistic_model)
+check_singularity(logistic_model)
+```
+
+```{r verifica frequenza variabili categoriche}
+# Function to identify multilevel variables with low frequency levels
+identify_low_frequency_levels <- function(df, threshold = 5) {
+  low_freq_vars <- list()
+  
+  for (var in names(df)) {
+    if (is.factor(df[[var]]) || is.character(df[[var]])) {
+      # Calculate the frequency of each level
+      freq <- table(df[[var]])
+      
+      # Identify levels with low frequency
+      low_freq_levels <- names(freq[freq <= threshold])
+      
+      # If there are low frequency levels, store the variable and levels in the list
+      if (length(low_freq_levels) > 0) {
+        low_freq_vars[[var]] <- low_freq_levels
+      }
+    }
+  }
+  
+  # Return the list of variables with their low frequency levels
+  return(low_freq_vars)
+}
+
+# Apply the function to the df data frame
+low_freq_levels_in_vars <- identify_low_frequency_levels(df)
+low_freq_levels_in_vars
+
+```
+```{r tabelle di contingenza rispetto a GRUPPO}
+# Calculate contingency tables for 'gruppo' against all categorical variables in df
+categorical_vars <- sapply(df, is.factor)
+contingency_tables <- lapply(names(df)[categorical_vars], function(var) {
+  table(df$GRUPPO, df[[var]])
+})
+
+names(contingency_tables) <- names(df)[categorical_vars]
+contingency_tables
+
+```
+RiprenDo i file in cui ho salvato i risultati del Wilcoxon e del Fisher ed estraggo tutte le variabili che hanno p<0.06
+
+```{r estrazione da wilcoxon test variabili con p<0.06}
+
+# Prima rimuovere le righe 2, 3 e 4 dal dataframe, poi procedere con il filtraggio
+wilcoxreduced <- combined_results %>%
+  slice(-c(1:3)) %>%  # Rimuove le righe 
+  filter(p.value < 0.06) %>%  # Filtra le righe in base al valore di p.value
+  select(variable, p.value)  # Seleziona solo le colonne 'variable' e 'p.value'
+
+
+# Visualizza il nuovo dataframe con le variabili significative
+print(wilcoxreduced)
+write.xlsx(wilcoxreduced, file = "wilcoxreduced.xlsx")
+
+# Create a table grob (graphical object) from the tibble
+table_grob <- gridExtra::tableGrob(wilcoxreduced)
+
+# Specify the filename for the PNG
+png_filename <- "wilcoxreduced.png"
+
+# Save the table grob as a PNG image
+ggsave(png_filename, table_grob, device = "png", width = 10, height = 8, units = "in")
+
+```
+```{r estrazione da fisher test variabili con p<0.06}
+
+# Filtra le righe con p-value < 0.06
+fishreduced <- result %>%
+  slice(-c(1:3)) %>%
+  filter(p.value < 0.06) %>%
+  select(variable, p.value)
+
+
+# Visualizza il nuovo dataframe con le variabili significative
+print(fishreduced)
+write.xlsx(fishreduced, file = "fishreduced.xlsx")
+# Create a table grob (graphical object) from the tibble
+table_grob <- gridExtra::tableGrob(fishreduced)
+
+# Specify the filename for the PNG
+png_filename <- "fishreduced.png"
+
+# Save the table grob as a PNG image
+ggsave(png_filename, table_grob, device = "png", width = 10, height = 8, units = "in")
+
+```
+
+a questo punto unisco i due dataframe per poi filtrare il dataset originale
+```{r unione dei data frame ridotti}
+# Unisci i due tibble
+merged_df <- bind_rows(wilcoxreduced, fishreduced)
+
+# Ottieni le variabili comuni
+variabili_comuni <- intersect(names(wilcoxreduced), names(fishreduced))
+
+# Seleziona solo le variabili comuni dal dataframe più grande
+nuovo_dataframe <- merged_df %>%
+  select(all_of(variabili_comuni))
+```
+
+riduco quindi il dataset originale, mantenendo la variabile GRUPPO
+```{r riduzione dataset originale}
+variables <- c("GRUPPO", as.character(nuovo_dataframe$variable))
+
+# Subset 'df' to keep only the variables listed in 'variables'
+df_reduced <- df[, variables, drop = FALSE]
+write.xlsx(df_reduced, file = "df_reduced.xlsx")
+```
+
+Una volta ricreato il dataset sulla base della significativa delle variabili, si procede nuovamente con una PCA.
+Lo scopo della PCA è quello di: 
+identificare pattern nascosti del dataset
+ridurre la dimensionalità dei dati rimuovendo il rumore e la ridondanza presenti
+identificare variabili correlate
+```{r PCA ridotto}
+numeric_vars <- df_reduced %>% select(where(is.numeric))
+res.pca <- PCA(numeric_vars, graph = FALSE)
+print(res.pca)
+
+```
+Come descritto nelle sezioni precedenti, gli autovalori misurano la quantità di variazione trattenuta da ciascuna componente principale. Gli autovalori sono grandi per le prime PC e piccoli per le successive. In altre parole, le prime PC corrispondono alle direzioni con la massima quantità di variazione nel set di dati.
+
+Esaminiamo gli autovalori per determinare il numero di componenti principali da considerare. 
+```{r eigenvalues}
+eig.val <- get_eigenvalue(res.pca)
+eig.val
+
+```
+Gli autovalori possono essere utilizzati per determinare il numero di componenti principali da mantenere dopo la PCA (Kaiser 1961):
+
+Un autovalore > 1 indica che le PC rappresentano una varianza maggiore di quella rappresentata da una delle variabili originali nei dati standardizzati. Questo valore viene comunemente utilizzato come punto di cutoff per la scelta delle PC da mantenere. Questo vale solo quando i dati sono standardizzati.
+
+È anche possibile limitare il numero di componenti a quel numero che rappresenta una certa frazione della varianza totale. Ad esempio, se si è soddisfatti del 70% della varianza totale spiegata, si può utilizzare il numero di componenti per raggiungere questo obiettivo.
+
+Un metodo alternativo per determinare il numero di componenti principali consiste nell'osservare uno Scree Plot, ovvero il grafico degli autovalori ordinati dal più grande al più piccolo. Il numero di componenti è determinato dal punto oltre il quale gli autovalori rimanenti sono tutti relativamente piccoli e di dimensioni comparabili (Jollife 2002, Peres-Neto, Jackson e Somers (2005)).
+```{r screeplot}
+fviz_eig(res.pca, addlabels = TRUE, ylim = c(0, 30))
+```
+Dal grafico sopra riportato, potremmo fermarci alla quinta componente principale. L'80% delle informazioni (varianze) contenute nei dati sono trattenute dalle prime cinque componenti principali.
+Un metodo semplice per estrarre i risultati, per variabili, dall'output di una PCA è utilizzare la funzione get_pca_var() [pacchetto factoextra]. Questa funzione fornisce un elenco di matrici contenenti tutti i risultati per le variabili attive (coordinate, correlazione tra variabili e assi, coseno quadrato e contributi).
+```{r risultati PCA}
+var <- get_pca_var(res.pca)
+```
+
+La correlazione tra una variabile e una componente principale (PC) viene utilizzata come coordinate della variabile sulla PC. La rappresentazione delle variabili differisce dal grafico delle osservazioni: Le osservazioni sono rappresentate dalle loro proiezioni, mentre le variabili sono rappresentate dalle loro correlazioni (Abdi e Williams 2010).
+```{r variable correlation plot}
+head(var$coord, 12)
+fviz_pca_var(res.pca, col.var = "black")
+
+
+```
+```{r}
+# Create a grouping variable using kmeans
+# Create 3 groups of variables (centers = 3)
+set.seed(123)
+res.km <- kmeans(var$coord, centers = 2, nstart = 25)
+grp <- as.factor(res.km$cluster)
+# Color variables by groups
+fviz_pca_var(res.pca, col.var = grp, 
+             palette = c("#0073C2FF", "#EFC000FF", "#868686FF"),
+             legend.title = "Cluster")
+fviz_pca_var(res.pca, col.var = grp, 
+             axes = c(1,3),
+             palette = c("#0073C2FF", "#EFC000FF", "#868686FF"),
+             legend.title = "Cluster")
+fviz_pca_var(res.pca, col.var = grp, 
+             axes = c(1,4),
+             palette = c("#0073C2FF", "#EFC000FF", "#868686FF"),
+             legend.title = "Cluster")
+
+```
+
+E' interessante visualizzare come le variabili si distribuiscono in base alle diverse combinazioni delle prime cinque dimensioni
+
+
+La qualità della rappresentazione delle variabili sulla mappa dei fattori è chiamata cos2 (coseno quadrato, coordinate al quadrato).
+Si noti che,
+
+Un cos2 elevato indica una buona rappresentazione della variabile sulla componente principale. In questo caso la variabile è posizionata vicino alla circonferenza del cerchio di correlazione.
+
+Un cos2 basso indica che la variabile non è perfettamente rappresentata dalle PC. In questo caso la variabile è vicina al centro del cerchio.
+
+Per una determinata variabile, la somma dei cos2 di tutte le componenti principali è uguale a uno.
+
+Se una variabile è perfettamente rappresentata da due sole componenti principali (Dim.1 e Dim.2), la somma dei cos2 su queste due PC è uguale a uno. In questo caso le variabili saranno posizionate sul cerchio delle correlazioni.
+
+Per alcune variabili, potrebbero essere necessarie più di 2 componenti per rappresentare perfettamente i dati. In questo caso le variabili sono posizionate all'interno del cerchio delle correlazioni.
+```{r cos2}
+head(var$cos2, 12)
+corrplot(var$cos2, is.corr=FALSE)
+```
+
+
+
+```{r matrice correlazione}
+cor_matrix <- cor(numeric_vars)
+
+corrplot(cor_matrix, method = "circle")
+```
+
+In sintesi:
+
+I valori di cos2 sono utilizzati per stimare la qualità della rappresentazione.
+Più una variabile è vicina al cerchio delle correlazioni, migliore è la sua rappresentazione sulla mappa dei fattori (e più importante è interpretare queste componenti).
+Le variabili che sono vicine al centro del grafico sono meno importanti per le prime componenti.
+
+Contributi delle variabili alle PC 
+I contributi delle variabili alla spiegazione della variabilità in una determinata componente principale sono espressi in percentuale.
+
+Le variabili che sono correlate con la PC1 (cioè la Dim.1) e la PC2 (cioè la Dim.2) sono le più importanti per spiegare la variabilità del set di dati. Le variabili che non sono correlate con nessuna PC o che sono correlate con le ultime dimensioni sono variabili con un basso contributo e potrebbero essere eliminate per semplificare l'analisi complessiva.
+```{r bar plot contributo variabili}
+# Loop per i primi 5 componenti principali
+for (i in 1:4) {
+  # Calcolo delle contribuzioni delle variabili al componente principale i
+  contrib_plot <- fviz_contrib(res.pca, choice = "var", axes = i, top = 12)
+  
+  # Visualizzazione del grafico delle contribuzioni
+  print(paste0("Contributo delle variabili a PC", i))
+  print(contrib_plot)
+}
+
+```
+Decrizione dimensioni
+Si noti inoltre che la funzione dimdesc() [in FactoMineR], per la descrizione delle dimensioni, può essere utilizzata per identificare le variabili associate in modo più significativo a una data componente principale
+```{r descrizione dimensioni}
+
+
+# Genera tutte le possibili combinazioni di coppie di dimensioni
+dimension_combinations <- combn(1:4, 2)
+
+# Loop su tutte le combinazioni di dimensioni
+for (i in 1:ncol(dimension_combinations)) {
+  # Seleziona le dimensioni corrispondenti alla combinazione attuale
+  dimensions <- dimension_combinations[, i]
+  
+  # Loop su tutte le dimensioni all'interno della combinazione corrente
+  for (j in dimensions) {
+    # Verifica se numeric_vars ha almeno una riga
+    if (nrow(numeric_vars) > 0) {
+      # Calcolo della PCA
+      pca_result <- PCA(numeric_vars, graph = FALSE)
+      
+      # Esegui dimdesc per le dimensioni specificate
+      res.desc <- dimdesc(pca_result, axes = j, proba = 0.05)
+      
+      # Output del contributo delle variabili per la dimensione corrente
+      print(paste0("Contributo delle variabili per la Dimensione ", j))
+      print(res.desc)
+    } else {
+      cat("Nessuna variabile numerica trovata nel dataframe 'df_reduced'.")
+      break  # Esci dal loop se non ci sono variabili numeriche
+    }
+  }
+}
+
+```
+
+```{r}
+# Create a grouping variable using kmeans
+# Create 3 groups of variables (centers = 3)
+set.seed(123)
+res.km <- kmeans(var$coord, centers = 2, nstart = 25)
+grp <- as.factor(res.km$cluster)
+# Color variables by groups
+fviz_pca_var(res.pca, col.var = grp, 
+             palette = c("#0073C2FF", "#EFC000FF", "#868686FF"),
+             legend.title = "Cluster")
+fviz_pca_var(res.pca, col.var = grp, 
+             axes = c(1,3),
+             palette = c("#0073C2FF", "#EFC000FF", "#868686FF"),
+             legend.title = "Cluster")
+fviz_pca_var(res.pca, col.var = grp, 
+             axes = c(1,4),
+             palette = c("#0073C2FF", "#EFC000FF", "#868686FF"),
+             legend.title = "Cluster")
+
+```
+
+
+
+```{r habillage PCA dataset ridotto tutte le diemnsioni}
+# Genera tutte le possibili combinazioni di coppie di dimensioni
+dimension_combinations <- combn(1:4, 2)
+
+# Loop su tutte le combinazioni di dimensioni
+for (i in 1:ncol(dimension_combinations)) {
+  # Seleziona le dimensioni corrispondenti alla combinazione attuale
+  dimensions <- dimension_combinations[, i]
+  
+  # Verifica se numeric_vars ha almeno una riga
+  if (nrow(numeric_vars) > 0) {
+    # Calcolo della PCA
+    pca_result <- PCA(numeric_vars, graph = FALSE)
+    
+    # Verifica se la variabile 'GRUPPO' è un fattore e se ha lo stesso numero di righe di numeric_vars
+    gruppo_factor <- factor(df_reduced$GRUPPO[1:nrow(numeric_vars)])
+    
+    # Grafico PCA utilizzando 'GRUPPO' per l'habillage
+    pca_plot <- fviz_pca_ind(pca_result,
+                              habillage = gruppo_factor, # Colora per 'GRUPPO'
+                              addEllipses = TRUE, # Aggiunge ellissi di confidenza
+                              ellipse.level = 0.95, # Livello di confidenza per le ellissi
+                              axes = dimensions) # Specifica l'intervallo di assi
+    
+    
+    
+    # Visualizzazione del grafico PCA
+    print(paste0("PCA Plot for Dimensions ", paste(dimensions, collapse = " and ")))
+    print(pca_plot)
+    
+    
+  } else {
+    cat("Nessuna variabile numerica trovata nel dataframe 'df_reduced'.")
+    break  # Esci dal loop se non ci sono variabili numeriche
+  }
+}
+```
+ripredno il dataset ridotto e procedo con la regressione logistica per simulare il mio modello
+```{r regressione logistica }
+
+
+# Adattare il modello di regressione logistica
+modello <- glm(GRUPPO ~ ., data = df_reduced, family = binomial())
+
+# Visualizzare il sommario del modello
+summary(modello)
+
+
+```
+```{r K-crossvalidation}
+# k-fold cross-validation
+set.seed(123) # for reproducibility
+folds <- createFolds(df_reduced$GRUPPO, k = 10)
+cv_results <- lapply(folds, function(fold_index) {
+  train_data <- df_reduced[-fold_index, ]
+  test_data <- df_reduced[fold_index, ]
+  
+  fitted_model <- glm(GRUPPO ~ ., data = train_data, family = binomial())
+  predictions <- predict(fitted_model, newdata = test_data, type = "response")
+  predicted_class <- ifelse(predictions > 0.5, 1, 0)
+  
+  confusionMatrix(factor(predicted_class, levels = c(0, 1)), factor(test_data$GRUPPO, levels = c(0, 1)))
+})
+
+# Calculate average accuracy across all folds
+accuracies <- sapply(cv_results, function(x) x$overall['Accuracy'])
+mean_accuracy <- mean(accuracies)
+mean_accuracy
+
+```
+```{r}
+# Funzione di costo che calcola il deviance residuale
+cost_function <- function(data, indices) {
+  train_data <- data[indices, ]  # crea il training set basato sugli indici
+  glm_model <- glm(GRUPPO ~ ., data = train_data, family = binomial())
+  return(deviance(glm_model))  # Restituisce il deviance residuale del modello
+}
+
+# Applica la cross-validation con 10 folds
+set.seed(123)  # Per riproducibilità
+cv_results <- cv.glm(df_reduced, cost_function, K = 10)
+
+# Visualizza i risultati
+print(cv_results)
+
+```
+
+```{r regressione logistica usando PCA}
+# Estrai le componenti principali dalla lista res.pca
+componenti_principali <- res.pca$x
+
+# Aggiungi la variabile GRUPPO dal dataframe df_reduced
+df_pca <- cbind(componenti_principali, GRUPPO = df_reduced$GRUPPO)
+# Converti la matrice df_pca in un data.frame
+df_pca <- as.data.frame(df_pca)
+
+# Converti la variabile GRUPPO in una variabile binaria
+df_pca$GRUPPO <- as.factor(df_pca$GRUPPO)  # Assicurati che GRUPPO sia di tipo factor
+
+# Se GRUPPO ha più di due livelli, ricodifica i livelli in 0 e 1
+levels(df_pca$GRUPPO) <- c(0, 1)  # Assicurati che i livelli siano in questo ordine
+
+# Verifica che ora GRUPPO contenga solo valori binari (0 o 1)
+table(df_pca$GRUPPO)
+
+# Eseguire la regressione logistica utilizzando la famiglia binomiale
+modello_logistico <- glm(GRUPPO ~ ., data = df_pca, family = binomial())
+
+# Mostrare il riepilogo del modello
+summary(modello_logistico)
+
+# Calcolare le previsioni
+previsioni_prob <- predict(modello_logistico, newdata = df_pca, type = "response")
+previsioni_classe <- ifelse(previsioni_prob > 0.5, 1, 0)  # Sostituire 0.5 con la soglia appropriata se necessario
+
+# Creare la matrice di confusione
+matrice_confusione <- table(Predicted = previsioni_classe, Actual = df_pca$GRUPPO)
+
+# Calcolare l'accuratezza
+accuratezza <- sum(diag(matrice_confusione)) / sum(matrice_confusione)
+print(paste("Accuratezza del modello: ", accuratezza))
+
+```
+```{r random forest su dataset}
+# Caricare la libreria per il modello Random Forest
+install.packages("randomForest")
+library(randomForest)
+
+# Assicurati che la variabile GRUPPO sia di tipo factor
+df_reduced$GRUPPO <- as.factor(df_reduced$GRUPPO)
+
+# Divisione dei dati in set di addestramento e test (ad es. 80% addestramento, 20% test)
+set.seed(123) # per la riproducibilità
+indice <- sample(2, nrow(df_reduced), replace = TRUE, prob = c(0.8, 0.2))
+train_data <- df_reduced[indice == 1, ]
+test_data <- df_reduced[indice == 2, ]
+
+# Addestramento del modello Random Forest
+modello_rf <- randomForest(GRUPPO ~ ., data = train_data)
+
+# Mostrare il riepilogo del modello
+print(modello_rf)
+
+# Previsione sul set di test
+previsioni <- predict(modello_rf, test_data)
+
+# Valutare le prestazioni del modello
+conf_matrix <- table(Actual = test_data$GRUPPO, Predicted = previsioni)
+print(conf_matrix)
+
+# Calcolare l'accuratezza
+accuratezza <- sum(diag(conf_matrix)) / sum(conf_matrix)
+print(paste("Accuratezza del modello: ", accuratezza))
+
+```
+```{r random forest su PCA}
+# Prepare the data for random forest
+pca_df <- data.frame(res.pca$ind$coord)
+pca_df$GRUPPO <- df$GRUPPO
+
+# Run random forest
+rf_model <- randomForest(GRUPPO ~ ., data = pca_df)
+rf_model
+# Calcolare le predizioni del modello
+rf_pred <- predict(rf_model, pca_df)
+
+# Calcolare l'accuratezza
+accuracy <- sum(rf_pred == pca_df$GRUPPO) / nrow(pca_df)
+
+# Stampare l'accuratezza
+print(accuracy)
+
+
+# Ottenere le probabilità predette
+rf_pred_prob <- predict(rf_model, pca_df, type = "prob")
+
+# Calcolare l'AUC
+auc <- roc(pca_df$GRUPPO, rf_pred_prob[, "crt"])$auc
+
+# Stampare l'AUC
+print(auc)
+
+```
+++++++++++++++
+```{r}
+# Convertire le colonne fattoriali in factor e poi in numerico
+df_reduced$GRUPPO <- as.numeric(as.factor(df_reduced$GRUPPO))
+df_reduced$CLASS.accomod <- as.numeric(as.factor(df_reduced$CLASS.accomod))
+df_reduced$ST.Autotrascendenza <- as.numeric(as.factor(df_reduced$ST.Autotrascendenza))
+df_reduced$CLASS.sacr_prot <- as.numeric(as.factor(df_reduced$CLASS.sacr_prot))
+
+# Visualizzare i dati per confermare la conversione
+head(df_reduced)
+write.xlsx(x=df_reduced, file = "./dfreduced2.xlsx")
+```
+```{r }
+# Perform PCA on the numeric variables
+numeric_vars <- df_reduced %>% select(where(is.numeric))
+
+pca_result <- prcomp(numeric_vars, scale. = TRUE, center = TRUE)
+
+# Use PCA dimensions to predict the GRUPPO variable
+pca_scores <- as.data.frame(pca_result$x)
+head(pca_result)
+df_reduced$GRUPPO <- factor(df_reduced$GRUPPO, levels = c("0", "1"))
+
+# Add the GRUPPO variable to the PCA scores data frame
+pca_scores$GRUPPO <- df_reduced$GRUPPO
+
+
+
+# Define the control method for cross-validation
+set.seed(123) # for reproducibility
+control <- trainControl(method = "cv", number = 10) # 10-fold cross-validation
+
+# Train the logistic regression model using the PCA scores
+model <- train(GRUPPO ~ ., data = pca_scores, method = "glm", family = "binomial", trControl = control)
+
+# Summarize the results of the cross-validation
+results <- model$results
+results
+```
+```{r}
+# Caricare le librerie necessarie
+library(readxl)
+library(caret)
+library(corrplot)
+library(pROC)
+
+# Caricare i dati
+data <- read_excel("dfreduced2.xlsx")
+
+# Stampa la struttura del dataset per verificare i tipi di dati
+str(data)
+
+# Convertire colonne non numeriche in numeriche, se necessario
+# Sostituisci 'column_name' con il nome effettivo della colonna da convertire
+data$Val.4 <- as.numeric(as.character(data$Val.4))
+
+# Separare le variabili indipendenti dalla variabile target 'GRUPPO'
+X <- data[, -which(names(data) == "GRUPPO")]
+y <- data$GRUPPO
+
+# Standardizzare le variabili indipendenti
+X_scaled <- scale(X)
+
+# Applicare PCA
+pca_result <- prcomp(X_scaled, rank. = 5)
+
+# Ottenere le prime 5 componenti principali
+X_pca <- pca_result$x[, 1:5]
+
+# Dividere i dati in training set e test set
+# Impostare il seed per la riproducibilità
+set.seed(123)
+
+# Creare gli indici per il training set
+trainIndex <- createDataPartition(y, p = 0.7, list = FALSE)
+
+# Creare i set di training e test per X e y
+X_train <- X_pca[trainIndex, ]
+X_test <- X_pca[-trainIndex, ]
+y_train <- y[trainIndex]
+y_test <- y[-trainIndex]
+
+# Convertire i valori di y_train e y_test da 1 e 2 a 0 e 1
+y_train_binary <- ifelse(y_train == min(y_train), 0, 1)
+y_test_binary <- ifelse(y_test == min(y_test), 0, 1)
+
+# Addestrare il modello di regressione logistica con la variabile target convertita
+model <- glm(y_train_binary ~ ., data = data.frame(X_train), family = binomial())
+
+# Effettuare previsioni sul test set
+predictions <- predict(model, newdata = data.frame(X_test), type = "response")
+predicted_classes <- ifelse(predictions > 0.5, 1, 0)
+
+# Calcolare la matrice di confusione e l'accuratezza
+conf_matrix <- table(Predicted = predicted_classes, Actual = y_test_binary)
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+
+# Stampare i risultati
+print(conf_matrix)
+print(paste("Accuracy:", accuracy))
+# Assicurati di usare la variabile binaria corretta per il calcolo della ROC
+roc_curve <- roc(response = y_test_binary, predictor = as.numeric(predictions), levels=c(0, 1))
+
+# Plottare la curva ROC
+plot(roc_curve, main="ROC Curve")
+
+# Calcolare e stampare l'AUC
+auc_value <- auc(roc_curve)
+print(paste("AUC:", auc_value))
+
+
+```
+```{r   PCA Random forest}
+# Caricare le librerie necessarie
+library(readxl)
+library(caret)
+library(randomForest)
+library(pROC)
+
+# Caricare i dati
+data <- read_excel("dfreduced2.xlsx")
+
+# Convertire colonne non numeriche in numeriche, se necessario
+data$Val.4 <- as.numeric(as.character(data$Val.4))
+
+# Separare le variabili indipendenti dalla variabile target 'GRUPPO'
+X <- data[, -which(names(data) == "GRUPPO")]
+y <- data$GRUPPO
+
+# Standardizzare le variabili indipendenti
+X_scaled <- scale(X)
+
+# Applicare PCA
+pca_result <- prcomp(X_scaled, rank. = 5)
+X_pca <- pca_result$x[, 1:5]
+
+# Dividere i dati in training set e test set
+set.seed(123)
+trainIndex <- createDataPartition(y, p = 0.7, list = FALSE)
+X_train <- X_pca[trainIndex, ]
+X_test <- X_pca[-trainIndex, ]
+y_train <- y[trainIndex]
+y_test <- y[-trainIndex]
+
+# Convertire y_train_binary e y_test_binary in fattori
+y_train_binary <- as.factor(y_train_binary)
+y_test_binary <- as.factor(y_test_binary)
+
+# Addestrare il modello Random Forest come classificatore
+rf_model <- randomForest(x = X_train, y = y_train_binary, ntree = 500, mtry = 2, importance = TRUE)
+
+# Effettuare previsioni sul test set usando il tipo 'prob' per ottenere le probabilità
+rf_predictions <- predict(rf_model, newdata = X_test, type = "prob")[,2]
+rf_predicted_classes <- ifelse(rf_predictions > 0.5, 1, 0)
+
+# Calcolare la matrice di confusione e l'accuratezza per il Random Forest
+rf_conf_matrix <- table(Predicted = rf_predicted_classes, Actual = y_test_binary)
+rf_accuracy <- sum(diag(rf_conf_matrix)) / sum(rf_conf_matrix)
+print(rf_conf_matrix)
+print(paste("Random Forest Accuracy:", rf_accuracy))
+
+# Calcolare la ROC e l'AUC per il Random Forest
+rf_roc_curve <- roc(response = y_test_binary, predictor = rf_predictions, levels=c(0, 1))
+# Plot della curva ROC
+plot(rf_roc_curve, main="Random Forest ROC Curve")
+print(rf_roc_curve)
+
+# AUC è mostrata nel riassunto dell'oggetto ROC, quindi potrebbe non essere necessario ricalcolarla
+# Se necessario, ecco come accedere direttamente all'AUC dall'oggetto
+rf_auc_value <- rf_roc_curve$auc
+print(paste("Random Forest AUC:", rf_auc_value))
+
+
+```
+Usando il dataset dfreduce2, procedo con l'implementazione dei modelli di addestramento
+più adatti in base alle caartteristiche del datset
+
+Per fornire un suggerimento adeguato sul modello da utilizzare, sarebbe utile conoscere alcune informazioni aggiuntive sul dataset, come il numero di variabili, la loro natura (categorica o numerica), il numero di osservazioni, e la distribuzione della variabile target "GRUPPO". Tuttavia, posso fornire alcuni consigli generali basati su tipiche caratteristiche dei dataset.
+
+1. **Support Vector Machines (SVM)**: Se le tue classi sono bene distinte o se prevedi che i modelli lineari possano non essere sufficientemente flessibili, SVM con kernel non lineare potrebbe essere una buona scelta. Le SVM sono efficaci in spazi ad alta dimensionalità e possono gestire bene la complessità, specialmente con un buon tuning del parametro del kernel e del parametro di regolarizzazione.
+
+2. **k-Nearest Neighbors (k-NN)**: Se il tuo dataset non è troppo grande (per evitare problemi di efficienza computazionale), k-NN può essere un'opzione semplice e efficace. È particolarmente utile quando i dati hanno una struttura naturale che fa sì che campioni simili siano più probabilmente nella stessa classe.
+
+3. **Naive Bayes**: Questo modello è molto adatto se le variabili indipendenti sono condizionatamente indipendenti dato il risultato, e può essere molto efficiente anche con un grande numero di variabili predittive. È particolarmente utile per i dati categorici.
+
+4. **Decision Trees**: I decision trees sono molto interpretativi, se questa è una caratteristica importante per te. Possono gestire sia dati numerici che categorici senza la necessità di pre-elaborazione come la normalizzazione. Sono anche utili per gestire i dati con interazioni e non linearità.
+
+5. **Gradient Boosting Machines (GBM)**: Se cerchi una performance predittiva molto alta e non ti preoccupi tanto della velocità di addestramento o della facilità di interpretazione, GBM potrebbe essere una scelta eccellente. Questi modelli sono spesso tra i migliori in termini di prestazioni predittive nei contesti di machine learning.
+
+6. **Neural Networks**: Se hai un dataset sufficientemente grande e complesso, e desideri catturare relazioni complesse, una rete neurale potrebbe essere appropriata. Tuttavia, richiedono più tempo per l'addestramento e sono meno interpretabili rispetto ad altri modelli.
+
+7. **Ensemble Methods (diversi da Random Forest)**: Potresti considerare tecniche di bagging o boosting diverse da Random Forest, come AdaBoost o Extra Trees, che possono offrire una buona varianza e una riduzione dell'errore di bias.
+
+Per procedere, caricherò il tuo dataset e esaminerò la struttura dei dati per fornire una raccomandazione più specifica.
+
+Il tuo dataset contiene 61 osservazioni e 14 variabili, tutte di tipo numerico intero. La variabile target, "GRUPPO", è probabilmente categorica, dato che è un intero che potrebbe rappresentare differenti gruppi o classi.
+
+Basato su questa struttura, ecco le mie raccomandazioni:
+
+1. **Support Vector Machines (SVM)**: Con un numero relativamente piccolo di osservazioni, un modello SVM potrebbe essere efficace, specialmente se le classi sono non-linearmente separabili. Puoi usare un kernel lineare per iniziare e sperimentare con kernel non-lineari (come RBF) se necessario.
+
+2. **Naive Bayes**: Data la natura numerica e discreta delle variabili, un modello Naive Bayes potrebbe essere implementato con facilità e potrebbe fornire buone prestazioni, soprattutto se le variabili sono relativamente indipendenti.
+
+3. **Decision Trees e Gradient Boosting Machines (GBM)**: I Decision Trees offrono un modello facilmente interpretabile, che potrebbe essere utile per comprendere quali caratteristiche influenzano principalmente la classificazione. Potresti iniziare con un semplice albero di decisione e poi considerare GBM per migliorare le prestazioni sfruttando tecniche di boosting.
+
+4. **k-Nearest Neighbors (k-NN)**: Se ritieni che campioni simili tendano a appartenere alla stessa classe, k-NN potrebbe essere un buon modello per iniziare. Tuttavia, dovrai scegliere con attenzione il numero di vicini (k) e considerare la normalizzazione delle caratteristiche, dato che la metrica di distanza sarà influenzata dalla scala delle variabili.
+
+5. **Ensemble Methods (diversi da Random Forest)**: Metodi come AdaBoost o Extra Trees potrebbero essere esplorati per vedere se offrono prestazioni migliorate rispetto a un singolo albero di decisione o a un modello più semplice di boosting.
+
+Dato il numero di osservazioni e la quantità di variabili, è importante anche prestare attenzione alla possibilità di overfitting e considerare l'uso di tecniche di validazione incrociata per ottimizzare i parametri del modello e valutare la loro generalizzazione. Puoi utilizzare la funzione `train` del pacchetto `caret` in R per facilitare questo processo.
+
+```{r}
+library(caret)
+library(e1071)       # Per SVM
+library(rpart)       # Per Decision Tree
+library(gbm)         # Per GBM
+library(class)       # Per k-NN
+if (!require("adabag")) install.packages("adabag", dependencies = TRUE)
+library(adabag)      # Per AdaBoost
+library(readxl)      # Per leggere file Excel
+library(writexl)     # Per scrivere file Excel
+library(gridExtra)
+# Preparare i dati
+data <- read_excel("dfreduced2.xlsx")
+X <- data[, -which(names(data) == "GRUPPO")]
+y <- data$GRUPPO
+dataset <- data.frame(X, GRUPPO = as.factor(y))
+
+# Creare e valutare i modelli
+set.seed(123)
+train_control <- trainControl(method = "cv", number = 10)
+models <- list(
+  "SVM" = train(GRUPPO ~ ., data = dataset, method = "svmRadial", trControl = train_control, preProcess = "scale"),
+  "Decision Tree" = train(GRUPPO ~ ., data = dataset, method = "rpart", trControl = train_control),
+  "GBM" = train(GRUPPO ~ ., data = dataset, method = "gbm", trControl = train_control, verbose = FALSE),
+  "k-NN" = train(GRUPPO ~ ., data = dataset, method = "knn", trControl = train_control, preProcess = "scale"),
+  "AdaBoost" = train(GRUPPO ~ ., data = dataset, method = "ada", trControl = train_control, tuneLength = 5),
+  "Random Forest" = train(GRUPPO ~ ., data = dataset, method = "rf", trControl = train_control),
+  "Logistic Regression" = train(GRUPPO ~ ., data = dataset, method = "glm", family = binomial(), trControl = train_control)
+)
+
+# Raccogliere i risultati in una tabella
+results <- lapply(models, function(model) {
+  data.frame(
+    Model = model$method,
+    Accuracy = model$results$Accuracy[which.max(model$results$Accuracy)],
+    Kappa = model$results$Kappa[which.max(model$results$Kappa)]
+  )
+})
+
+# Convertire la lista di dataframe in un unico dataframe
+results_df <- do.call(rbind, results)
+
+# Stampare e salvare i risultati
+print(results_df)
+write_xlsx(results_df, "model_comparison_results.xlsx")
+
+
+# Salvare i risultati come immagine PNG
+library(gridExtra)  # Ensure this library is loaded
+
+png("model_comparison_results.png", width = 800, height = 600)
+grid.table(results_df,
+           rows = NULL,  # Remove row names to clean up the display
+           theme = ttheme_default(
+             base_size = 14,  # Adjust font size to ensure readability
+             core = list(fg_params = list(fontface = "bold"),  # Bold text for data
+                         bg_params = list(fill = "white", alpha = 1)),  # White background for data cells
+             colhead = list(fg_params = list(fontface = "bold", col = "black"),  # Bold and black column headers
+                            bg_params = list(fill = "grey90", alpha = 1)),  # Light grey background for headers
+             padding = unit(c(10, 4), "mm")  # More padding for cell spacing
+           ))
+dev.off()
+
+
+```
+```{r}
+library(caret)
+library(readxl)
+library(xlsx)
+library(writexl)
+library(caret)
+library(readxl)
+library(xlsx)
+
+# Carica i dati
+data_reduced <- read_excel("dfreduced2.xlsx")
+
+# Converti 'GRUPPO' in un fattore se è una variabile di risposta
+data_reduced$GRUPPO <- as.factor(data_reduced$GRUPPO)
+
+# Verifica il tipo di 'GRUPPO' e che sia nel dataframe
+print("GRUPPO" %in% names(data_reduced))
+print(class(data_reduced$GRUPPO))
+
+# Seleziona solo le colonne numeriche
+numeric_cols <- sapply(data_reduced, is.numeric)
+data_numeric <- data_reduced[, numeric_cols]
+
+# Controlla quali colonne sono incluse
+print(names(data_numeric))
+
+# Assicurati di rimuovere 'GRUPPO' correttamente se è presente come numerica
+if ("GRUPPO" %in% names(data_numeric)) {
+    pca_columns <- data_numeric[, !names(data_numeric) %in% "GRUPPO", drop = FALSE]
+} else {
+    pca_columns <- data_numeric
+}
+
+print(dim(pca_columns))
+
+# Esegui la PCA solo se ci sono abbastanza colonne
+if (ncol(pca_columns) > 1) {
+    pca_result <- prcomp(pca_columns, scale. = TRUE)
+    print(summary(pca_result)) # Mostra il riassunto dell'analisi PCA
+} else {
+    print("Non ci sono abbastanza colonne numeriche per eseguire PCA.")
+}
+
+# Determina il numero di componenti principali per il 80% della varianza
+cumulative_variance <- cumsum(pca_result$sdev^2) / sum(pca_result$sdev^2)
+num_components <- which(cumulative_variance >= 0.8)[1]
+
+# Crea un dataset con i componenti principali selezionati
+data_pca <- as.data.frame(predict(pca_result, newdata = pca_columns)[, 1:num_components])
+data_pca$GRUPPO <- data_reduced$GRUPPO
+
+# Model training and evaluation setup
+set.seed(123)
+train_control <- trainControl(method = "cv", number = 10)
+models_pca <- list(
+  "SVM" = train(GRUPPO ~ ., data = data_pca, method = "svmRadial", trControl = train_control),
+  "Decision Tree" = train(GRUPPO ~ ., data = data_pca, method = "rpart", trControl = train_control),
+  "GBM" = train(GRUPPO ~ ., data = data_pca, method = "gbm", trControl = train_control, verbose = FALSE),
+  "k-NN" = train(GRUPPO ~ ., data = data_pca, method = "knn", trControl = train_control),
+  "AdaBoost" = train(GRUPPO ~ ., data = data_pca, method = "ada", trControl = train_control, tuneLength = 5),
+  "Random Forest" = train(GRUPPO ~ ., data = data_pca, method = "rf", trControl = train_control),
+  "Logistic Regression" = train(GRUPPO ~ ., data = data_pca, method = "glm", family = binomial(), trControl = train_control)
+)
+
+# Compile results
+results_pca <- lapply(models_pca, function(model) {
+  data.frame(
+    Model = model$method,
+    Accuracy = model$results$Accuracy[which.max(model$results$Accuracy)],
+    Kappa = model$results$Kappa[which.max(model$results$Kappa)]
+  )
+})
+results_df_pca <- do.call(rbind, results_pca)
+
+# Output results
+print(results_df_pca)
+write_xlsx(results_df_pca, "model_comparison_results_pca.xlsx")
+# Salvare i risultati come immagine PNG
+library(gridExtra)  # Ensure this library is loaded
+
+png("model_comparison_results_pca.png", width = 800, height = 600)
+grid.table(results_df,
+           rows = NULL,  # Remove row names to clean up the display
+           theme = ttheme_default(
+             base_size = 14,  # Adjust font size to ensure readability
+             core = list(fg_params = list(fontface = "bold"),  # Bold text for data
+                         bg_params = list(fill = "white", alpha = 1)),  # White background for data cells
+             colhead = list(fg_params = list(fontface = "bold", col = "black"),  # Bold and black column headers
+                            bg_params = list(fill = "grey90", alpha = 1)),  # Light grey background for headers
+             padding = unit(c(10, 4), "mm")  # More padding for cell spacing
+           ))
+dev.off()
+
+```
++++++++preparazione del dataset al k-nn+++++
+```{r}
+
+
+# Leggere il dataset
+data <- read_excel("df_reduced.xlsx")
+
+
+# Rimuovere valori nulli
+data <- na.omit(data)
+
+# Identificazione ed eliminazione degli outlier
+numerical_cols <- names(data)[sapply(data, is.numeric)]
+data <- data %>% mutate(across(all_of(numerical_cols), ~replace(., is.na(.), mean(., na.rm = TRUE))))
+data <- data %>% filter(across(all_of(numerical_cols), ~(. >= quantile(., 0.25) - 1.5*IQR(.) & . <= quantile(., 0.75) + 1.5*IQR(.))))
+
+# Trasformazione delle variabili categoriali
+data$GRUPPO <- as.numeric(data$GRUPPO == "ball") + 2*as.numeric(data$GRUPPO == "crt")
+data <- data %>%
+  mutate(across(c("CLASS.accomod", "ST.Autotrascendenza", "CLASS.sacr_prot"), as.factor)) %>%
+  model.matrix(~.-1, data = .) %>%
+  as.data.frame()
+
+# Standardizzazione delle variabili numeriche
+numerical_cols <- names(data)[sapply(data, is.numeric)]  # Aggiorna l'elenco delle colonne numeriche dopo trasformazioni
+preProcess_scale <- preProcess(data[numerical_cols], method = c("center", "scale"))
+data[numerical_cols] <- predict(preProcess_scale, data[numerical_cols])
+
+# Salvare il dataset pulito come Excel
+write.xlsx(data, "dataclean.xlsx")
+
+# Stampare il messaggio di completamento
+print("Dataset pulito e salvato con successo!")
+
+
+```
+
+```{r valutazione k-nn}
+
+
+# Caricamento dei dati
+data <- read_excel("datacl.xlsx")
+
+# Impostazione del seed per la riproducibilità
+set.seed(123)
+# Assicurati che GRUPPO sia un fattore e rinomina i livelli
+data$GRUPPO <- as.factor(data$GRUPPO)
+levels(data$GRUPPO) <- c("ball", "crt")
+
+# Rimozione delle colonne con varianza zero
+data <- data[, -which(colnames(data) %in% c("Val.4", "ST.Autotrascendenza_basso"))]
+
+
+# Impostazione del seed per la riproducibilità
+set.seed(123)
+
+# Preparazione del training set
+training_index <- createDataPartition(data$GRUPPO, p = 0.8, list = FALSE)
+training_set <- data[training_index,]
+testing_set <- data[-training_index,]
+
+# Definizione del controllo per la cross-validation
+train_control <- trainControl(method = "cv", number = 10, classProbs = TRUE, summaryFunction = twoClassSummary, savePredictions = "final")
+
+# Allenamento del modello k-NN
+knn_fit <- train(GRUPPO ~ ., data = training_set, method = "knn", trControl = train_control, preProcess = "scale", metric = "ROC")
+
+# Predizione sul test set
+knn_predictions <- predict(knn_fit, newdata = testing_set)
+knn_prob_predictions <- predict(knn_fit, newdata = testing_set, type = "prob")
+
+# Calcolo della curva ROC e AUC
+roc_results <- roc(response = testing_set$GRUPPO, predictor = knn_prob_predictions[,2])
+
+# Calcolo della matrice di confusione
+confusion <- confusionMatrix(knn_predictions, testing_set$GRUPPO)
+
+# Calcolo dell'accuratezza, precisione, richiamo e F1-score
+accuracy <- sum(knn_predictions == testing_set$GRUPPO) / length(testing_set$GRUPPO)
+precision <- posPredValue(knn_predictions, testing_set$GRUPPO, positive = "ball")
+recall <- sensitivity(knn_predictions, testing_set$GRUPPO, positive = "ball")
+F1 <- 2 * precision * recall / (precision + recall)
+
+# Creazione di una tabella con i risultati
+results_table <- data.frame(
+  Metric = c("Accuracy", "Precision", "Recall", "F1 Score", "AUC"),
+  Value = c(accuracy, precision, recall, F1, as.numeric(roc_results$auc))
+)
+
+# Salvataggio della tabella dei risultati come immagine PNG
+png("results_table.png", width = 800, height = 600)
+grid.table(results_table)
+dev.off()
+
+# Creazione e salvataggio della tabella della matrice di confusione come immagine PNG
+confusion_matrix_table <- as.data.frame(confusion$table)
+png("confusion_matrix.png", width = 800, height = 600)
+grid.table(confusion_matrix_table)
+dev.off()
+
+# Salvataggio del grafico ROC
+png("roc_curve.png", width = 800, height = 600)
+plot(roc_results, main="ROC Curve")
+dev.off()
+
+
+```
+```{r PCA}
+# Caricare le librerie necessarie
+library(readxl)
+library(ggplot2)
+
+# Caricare i dati dal file Excel
+dati <- read_excel("datacl.xlsx")
+
+# Assicurarsi che i dati siano nel formato corretto
+dati <- as.data.frame(lapply(dati, as.numeric))
+dati <- na.omit(dati)  # Rimuovere eventuali valori mancanti
+# Stampa i nomi delle colonne del dataframe
+print(names(dati))
+
+# Rimozione delle colonne con varianza zero
+dati_clean <- dati[, sapply(dati, function(x) var(x, na.rm = TRUE) != 0)]
+# Assicurarsi che la variabile o funzione sia definita
+if ("CLASS.sacr_prot" %in% ls()) {
+  print("La variabile esiste")
+} else {
+  print("La variabile non esiste")
+}
+# Verifica se ci sono ancora colonne con varianza zero
+summary(apply(dati_clean, 2, var))
+
+# Esecuzione della PCA sui dati puliti
+pca_result <- prcomp(dati_clean, scale. = TRUE)
+
+# Stampa dei risultati della PCA
+summary(pca_result)
+
+
+```
+
+
