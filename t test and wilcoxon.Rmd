@@ -1,0 +1,470 @@
+---
+title: "t test"
+author: "Datapsy1979"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(broom)
+library(readxl)
+library(openxlsx)
+library(purrr)
+library(ggplot2)
+```
+```{r}
+
+df<-read.xlsx("tesi finale.xlsx")
+df <- df %>% 
+  mutate(across(where(is.character), as.factor))
+
+# Rinomina le variabili nel DataFrame usando i vecchi e i nuovi nomi
+df_rinominato <- df %>%
+  rename(
+    spirituality = st2,
+    accondiscendenza = accomod,
+    `grado sintomi` = scoregsit1,
+    autotrascendenza = sttotale,
+    ansia = scoreanxt1,
+    `transpersonal identification` = st1,
+    autosacrifcio = sacrprot,
+    paranoia = scorepart1,
+    `dipendenza da ricompensa` = rd1,
+    `difficoltà comunicare sentimenti` = diffcomunicaresentimenti
+  )
+df_rinominato <- mutate_if(df_rinominato, is.character, as.factor)
+```
+
+```{r wilcoxon}
+
+
+# Identifica le colonne numeriche escludendo 'gruppo' o altre colonne non numeriche
+colonne_numeriche <- sapply(df_rinominato, is.numeric)
+
+# Esegui il test di Wilcoxon per ogni variabile numerica tra i gruppi e filtra per p < 0.06
+risultati_wilcoxon <- df_rinominato %>%
+  select(gruppo, which(colonne_numeriche)) %>%
+  pivot_longer(cols = -gruppo, names_to = "variabile", values_to = "valore") %>%
+  split(.$variabile) %>%
+  map_df(~ {
+    test_result = wilcox.test(valore ~ gruppo, data = .x)
+    data.frame(variabile = unique(.x$variabile), 
+               p.value = test_result$p.value)
+  }) %>%
+  filter(p.value < 0.06) %>%
+  arrange(p.value)
+
+
+# Stampa i risultati ordinati per p-value crescente
+print(risultati_wilcoxon)
+
+# Salva i risultati in un nuovo file Excel
+write.xlsx(risultati_wilcoxon, "wilcoxon.xlsx")
+
+```
+```{r}
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(openxlsx)
+library(rstatix)  # per calcolare intervallo di confidenza se disponibile
+library(effsize)  # per calcolare la dimensione dell'effetto
+
+# Assumo che df_rinominato sia già definito nel tuo ambiente R
+# e che 'colonne_numeriche' sia un vettore con i nomi delle colonne numeriche
+# Identifica le colonne numeriche escludendo 'gruppo' o altre colonne non numeriche
+colonne_numeriche <- sapply(df_rinominato, is.numeric)
+risultati_wilcoxon <- df_rinominato %>%
+  select(gruppo, which(colonne_numeriche)) %>%
+  pivot_longer(cols = -gruppo, names_to = "variabile", values_to = "valore") %>%
+  split(.$variabile) %>%
+  map_df(~ {
+    test_result = wilcox.test(valore ~ gruppo, data = .x, conf.int = TRUE)
+    ic_inf <- ifelse(!is.null(test_result$conf.int), test_result$conf.int[1], NA)
+    ic_sup <- ifelse(!is.null(test_result$conf.int), test_result$conf.int[2], NA)
+    effetto_dimensione <- cliff.delta(.x$valore[.x$gruppo == unique(.x$gruppo)[1]],
+                                      .x$valore[.x$gruppo == unique(.x$gruppo)[2]])$estimate
+    data.frame(variabile = unique(.x$variabile),
+               statistica = test_result$statistic,
+               p.value = test_result$p.value,
+               conf.int.inf = ic_inf,
+               conf.int.sup = ic_sup,
+               d.cliff = effetto_dimensione)
+  }) %>%
+  filter(p.value < 0.06) %>%
+  arrange(p.value)
+
+# Stampa i risultati ordinati per p-value crescente
+print(risultati_wilcoxon)
+
+# Salva i risultati in un nuovo file Excel
+write.xlsx(risultati_wilcoxon, "risultati_wilcoxon_completi.xlsx")
+
+```
+
+
+```{r}
+library(flextable)
+ft<-flextable(risultati_wilcoxon)
+ft <- add_header_lines(ft, 
+  values = "Test di Wilcoxon " ) 
+theme_box(ft)
+```
+
+```{r grafici}
+
+# Identifica le colonne numeriche escludendo 'gruppo' o altre colonne non numeriche
+colonne_numeriche <- sapply(df_rinominato, is.numeric) & !names(df_rinominato) %in% c("gruppo")
+
+# Prepara il dataframe per i test e i plot
+data_long <- df_rinominato %>%
+  select(gruppo, which(colonne_numeriche)) %>%
+  pivot_longer(cols = -gruppo, names_to = "variabile", values_to = "valore")
+
+# Esegui il test di Wilcoxon per ogni variabile numerica tra i gruppi e filtra per p < 0.06
+risultati_wilcoxon <- data_long %>%
+  split(.$variabile) %>%
+  map_df(~ {
+    test_result = wilcox.test(valore ~ gruppo, data = .x)
+    data.frame(variabile = unique(.x$variabile), 
+               p.value = test_result$p.value)
+  }) %>%
+  filter(p.value < 0.06) %>%
+  arrange(p.value)
+
+# Funzione per determinare il livello di significatività
+get_significance <- function(p_value) {
+  if (p_value < 0.001) {
+    return("***")
+  } else if (p_value < 0.01) {
+    return("**")
+  } else if (p_value < 0.05) {
+    return("*")
+  } else {
+    return("")
+  }
+}
+
+# Creare e mostrare boxplot per ogni variabile significativa
+for (var in risultati_wilcoxon$variabile) {
+  p_value <- risultati_wilcoxon$p.value[risultati_wilcoxon$variabile == var]
+  significance_marks <- get_significance(p_value)
+  p <- ggplot(data_long[data_long$variabile == var, ], aes(x = gruppo, y = valore)) +
+    geom_boxplot() +
+    labs(title = paste( var, " p.value =", format(p_value, digits = 3), significance_marks),
+         x = "Gruppo",
+         y = "Valore")+
+    theme_light()+
+    theme(
+    plot.title = element_text(face = "plain", color = "black", family = "serif", size = 14),
+    axis.title.x = element_text(face = "plain", color = "black", family = "serif", size = 12),
+    axis.title.y = element_text(face = "plain", color = "black", family = "serif", size = 12),
+    text = element_text(family = "serif")# Applica il font serif a tutto il testo nel grafico
+  )
+  
+  print(p)  # Mostra il grafico
+  # Salvare il grafico come PNG
+  ggsave(paste0(var, "_boxplot.png"), plot = p, width = 10, height = 8, dpi = 300)
+}
+
+
+
+```
+
+```{r statistiche descrittive}
+#Il tuo DataFrame e le variabili di interesse
+variabili <- c("spirituality", "accondiscendenza", "grado sintomi", "autotrascendenza", "ansia", "transpersonal identification", "autosacrifcio", "paranoia", "dipendenza da ricompensa", "difficoltà comunicare sentimenti")
+
+# Calcolo di summary per ogni variabile per ogni gruppo
+dati_summary <- df_rinominato %>%
+  select(gruppo, all_of(variabili)) %>%  # Assicurati di avere 'gruppo' e le variabili di interesse
+  pivot_longer(cols = -gruppo, names_to = "variabile", values_to = "valore") %>%
+  group_by(gruppo, variabile) %>%
+  summarise(
+    Min = min(valore, na.rm = TRUE),
+    Q1 = quantile(valore, 0.25, na.rm = TRUE),
+    Mediana = median(valore, na.rm = TRUE),
+    Q3 = quantile(valore, 0.75, na.rm = TRUE),
+    Max = max(valore, na.rm = TRUE),
+    .groups = 'drop'  # Rimuove il raggruppamento dopo il calcolo
+  )
+
+# Visualizza il DataFrame con i riepiloghi
+print(dati_summary)
+write.xlsx(dati_summary, file = "statistiche descrittive.xlsx")
+stable<-flextable(dati_summary)
+stable <- add_header_lines(stable, 
+  values = "Statistiche descrittive" ) 
+theme_box(stable)
+
+```
+
+
+
+```{r Fisher}
+# Caricare le librerie necessarie
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(writexl)
+library(rlang)
+library(RColorBrewer)
+
+
+
+df<-df_rinominato
+colnames(df)[colnames(df) == "classaccomod"] <- "grado accondiscendenza"
+colnames(df)[colnames(df) == "classsacrprot"] <- "tendenza autosacrificio"
+colnames(df)[colnames(df) == "stautotrascendenza"] <- "livello autotrascendenza"
+colnames(df)[colnames(df) == "val4"] <- "val4"
+# Rimuovere la colonna 'occupazioneattuale' se presente
+df <- df %>% 
+  select(-occupazioneattuale)
+# Convertire tutte le variabili di tipo character in fattori
+df <- mutate_if(df, is.character, as.factor)
+
+# Funzione per eseguire il test di Fisher se appropriato
+run_fisher_test <- function(data, group_var, test_var) {
+  if (nlevels(data[[test_var]]) < 10 && nlevels(data[[group_var]]) < 10) { # Assicurati che ci siano meno di 10 livelli
+    test_result <- tryCatch({
+      fisher.test(data[[test_var]], data[[group_var]])
+    }, error = function(e) {
+      # Ritorna un data frame con NA se il test fallisce
+      return(NULL)
+    })
+    
+    # Verifica che test_result sia un oggetto di tipo 'htest'
+    if (!is.null(test_result) && !is.na(test_result$p.value)) {
+      return(data.frame(
+        variabile = test_var,
+        p_value = test_result$p.value,
+        Estimate = if(!is.null(test_result$estimate)) test_result$estimate else NA,
+        Null_Value = if(!is.null(test_result$null.value)) test_result$null.value else NA,
+        Alternative = if(!is.null(test_result$alternative)) test_result$alternative else NA,
+        Method = test_result$method,
+        Data_Name = test_result$data.name
+      ))
+    } else {
+      return(data.frame(variabile = test_var, p_value = NA, Estimate = NA, Null_Value = NA, Alternative = NA, Method = NA, Data_Name = NA))
+    }
+  } else {
+    return(data.frame(variabile = test_var, p_value = NA, Estimate = NA, Null_Value = NA, Alternative = NA, Method = NA, Data_Name = NA))
+  }
+}
+
+# Applicare il test di Fisher condizionatamente
+results <- bind_rows(lapply(names(df)[names(df) != "gruppo" & names(df) != "occupazioneattuale" & sapply(df, is.factor)], function(var) {
+  run_fisher_test(df, "gruppo", var)
+}))
+print(results)
+# Selezionare le variabili con p-value < 0.06
+filtered_results <- results %>% filter(p_value < 0.06)
+
+# Salvare i risultati in un file Excel
+write_xlsx(filtered_results, "fisher.xlsx")
+print(filtered_results)
+
+create_and_save_plots <- function(data, variable_name, p_value) {
+  significance <- if (p_value < 0.001) "***" else if (p_value < 0.01) "**" else if (p_value < 0.05) "*" else if (p_value < 0.06) "." else ""
+  clean_variable_name <- gsub("`", "", variable_name)
+  p <- ggplot(data, aes(x = `gruppo`, fill = !!rlang::sym(variable_name))) +  # Uso di rlang::sym per gestire i nomi delle variabili
+    geom_bar(position = "dodge", stat = "count") +
+    labs(title = paste(clean_variable_name, "p.value:", sprintf("%.3f", p_value), significance),
+         x = "Gruppo", y = "Conteggio") +
+    theme_light()+
+    theme(
+    plot.title = element_text(face = "plain", color = "black", family = "serif", size = 14),
+    axis.title.x = element_text(face = "plain", color = "black", family = "serif", size = 12),
+    axis.title.y = element_text(face = "plain", color = "black", family = "serif", size = 12),
+    text = element_text(family = "serif")# Applica il font serif a tutto il testo nel grafico
+  )+
+    scale_fill_discrete(name = clean_variable_name)
+
+  ggsave(filename = paste0(variable_name, "_plot.png"), plot = p, width = 10, height = 8, units = "in")
+  print(p)
+}
+
+# Assicurati che ogni chiamata a questa funzione passi il nome della variabile come stringa
+lapply(filtered_results$variabile, function(var_name) {
+  var_data <- df %>% select(gruppo, all_of(var_name))
+  var_p_value <- filtered_results$p_value[filtered_results$variabile == var_name]
+  create_and_save_plots(var_data, var_name, var_p_value)
+})
+
+```
+```{r}
+fish<-read.xlsx("fisher.xlsx")
+ft<-flextable(fish)
+ft
+```
+
+
+
+```{r creazione nuovo dataset ridotto con p<0.05}
+# Carica i dati dai file Excel
+library(readxl)
+library(dplyr)
+
+fisher_results <- read_excel("fisher.xlsx")
+wilcoxon_results <- read_excel("wilcoxon.xlsx")
+main_data <- read_excel("tesi finale.xlsx")  # Sostituisci con il percorso corretto se necessario
+
+# Estrai le etichette della colonna Variable dove p_value < 0.06 per il primo file
+variables_fisher <- fisher_results %>%
+  filter(p_value < 0.05) %>%
+  pull(variabile)
+
+# Estrai le etichette della colonna Variable dove p_value < 0.06 per il secondo file
+variables_wilcoxon <- wilcoxon_results %>%
+  filter(p.value < 0.05) %>%
+  pull(variabile)
+
+# Combina le variabili selezionate in un unico vettore di nomi di colonne
+colonne <- unique(c(variables_fisher, variables_wilcoxon))
+
+df_rinominato<-df# Seleziona le colonne dal dataset principale
+reduced_data <- df_rinominato %>%
+  select(gruppo, all_of(colonne))
+colonne <- colonne[colonne %in% colnames(df_rinominato)]
+print(colonne)
+# Verifica se le colonne sono presenti nel dataset ridotto
+missing_columns <- setdiff(colonne, colnames(reduced_data))
+if (length(missing_columns) > 0) {
+  cat("Le seguenti colonne non sono presenti nel dataset ridotto:\n")
+  print(missing_columns)
+} else {
+  cat("Tutte le colonne selezionate sono presenti nel dataset ridotto.")
+}
+write_xlsx(reduced_data, "dataset machine.xlsx")
+```
+```{r matrice di correlazione}
+library(corrr)
+library(corrplot)
+data<-read.xlsx("dataset machine.xlsx")
+colnames(data)
+
+# Selezionare solo le colonne numeriche
+numeric_data <- data[, c('spirituality', 'accondiscendenza', 'grado.sintomi', 'autotrascendenza', 'ansia', 'transpersonal.identification', 'autosacrifcio')]
+
+## Calcolare la matrice di correlazione
+corr_matrix <- cor(numeric_data, use = "complete.obs")  # gestisce eventuali NA
+
+# Visualizzare la matrice di correlazione utilizzando corrplot
+corrplot(corr_matrix, method = "color", type = "upper", order = "hclust",
+         addCoef.col = "black",  # aggiunge i coefficienti di correlazione
+         tl.col = "black", tl.srt = 45,  # orientamento del testo
+         diag = FALSE)  # non mostra i valori sulla diagonale
+
+# Salvare il grafico come PNG
+png("correlation_matrix.png", width = 800, height = 600)
+corrplot(corr_matrix, method = "color", type = "lower", order = "hclust",
+         addCoef.col = "black", tl.col = "black", tl.srt = 45, diag = FALSE)
+dev.off()  # chiude il dispositivo grafico
+
+```
+```{r}
+library(readxl)
+library(dplyr)
+library(flextable)
+
+# Caricare il dataset
+data <- read_excel("dataset machine.xlsx")
+
+# Controllare i nomi delle colonne
+colnames(data)
+
+# Modifica i nomi delle colonne se necessario per corrispondere ai nomi richiesti
+names(data) <- make.names(names(data))
+
+# Selezionare solo le colonne numeriche richieste
+numeric_data <- data %>% select(spirituality, accondiscendenza, grado.sintomi, autotrascendenza, ansia, transpersonal.identification, autosacrifcio)
+
+# Calcolare la matrice di correlazione di Spearman
+spearman_corr_matrix <- cor(numeric_data, method = "spearman", use = "complete.obs")
+
+# Funzione per calcolare la matrice di p-value per Spearman
+spearman_p_matrix <- function(data) {
+  n <- ncol(data)
+  p_matrix <- matrix(NA, n, n)
+  colnames(p_matrix) <- colnames(data)
+  rownames(p_matrix) <- colnames(data)
+  
+  for (i in 1:(n - 1)) {
+    for (j in (i + 1):n) {
+      test <- cor.test(data[[i]], data[[j]], method = "spearman")
+      p_matrix[i, j] <- test$p.value
+      p_matrix[j, i] <- test$p.value
+    }
+  }
+  
+  return(p_matrix)
+}
+
+# Calcolare la matrice di p-value
+spearman_p_values <- spearman_p_matrix(numeric_data)
+
+# Creare una matrice di correlazione formattata con significatività
+formatted_corr_matrix <- spearman_corr_matrix
+for (i in 1:nrow(formatted_corr_matrix)) {
+  for (j in 1:ncol(formatted_corr_matrix)) {
+    if (!is.na(spearman_corr_matrix[i, j]) && i != j) {
+      corr_value <- spearman_corr_matrix[i, j]
+      p_value <- spearman_p_values[i, j]
+      if (p_value < 0.001) {
+        formatted_corr_matrix[i, j] <- sprintf("%.2f***", corr_value)
+      } else if (p_value < 0.01) {
+        formatted_corr_matrix[i, j] <- sprintf("%.2f**", corr_value)
+      } else if (p_value < 0.05) {
+        formatted_corr_matrix[i, j] <- sprintf("%.2f*", corr_value)
+      } else {
+        formatted_corr_matrix[i, j] <- sprintf("%.2f", corr_value)
+      }
+    } else {
+      formatted_corr_matrix[i, j] <- sprintf("%.2f", spearman_corr_matrix[i, j])
+    }
+  }
+}
+
+# Convertire la matrice di correlazione formattata in un data frame
+formatted_corr_df <- as.data.frame(formatted_corr_matrix)
+formatted_corr_df$Variables <- rownames(formatted_corr_df)
+formatted_corr_df <- formatted_corr_df %>%
+  rename(
+    Variabile = Variables,
+    accond = accondiscendenza,
+    autotras = autotrascendenza,
+    TI = transpersonal.identification,
+    autosacr = autosacrifcio
+  ) %>%
+  select(Variabile, everything())
+
+# Creare la tabella flextable
+ft <- flextable(formatted_corr_df)
+
+# Formattare la tabella
+ft <- set_header_labels(ft, Variables = "Variables")
+ft <- autofit(ft)
+ft <- set_caption(ft, "Spearman Correlation Matrix with Significance")
+
+# Salvare la tabella come immagine (opzionale)
+# save_as_image(ft, "spearman_correlation_matrix.png")
+
+# Mostrare la tabella
+ft
+save_as_image(ft, "spearman.png", height= 15, width= 14.5,  expand = 0, res = 600)
+```
+
+
+
+
+
+
+
+
+

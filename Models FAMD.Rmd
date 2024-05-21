@@ -1,0 +1,637 @@
+---
+title: "Models trained on  FAMD"
+author: "Datapsy1979"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(tidyverse)
+library(readxl)
+library(writexl)
+library(caret)
+library(rpart)
+library(rsample)
+library(openxlsx)
+library(pROC)
+library(xgboost)
+library(randomForest)
+library(nnet)
+library(readxl)
+library(writexl)
+library(dplyr)
+```
+Modelli di machine learning addestrati su dataset dataridotto
+```{r}
+data<-read.xlsx("FAMDset2.xlsx")
+  for (col in names(data)) {
+  # Controlla se la colonna è di tipo character
+  if (is.character(data[[col]])) {
+    # Trasforma la colonna in un fattore
+    data[[col]] <- as.numeric(data[[col]])
+  }
+  }
+data$gruppo<-as.factor(data$gruppo)
+```
+
+DECISION TREE
+
+
+```{r dataset split}
+set.seed(123)
+data_split <- initial_split(data, prop = 0.8, strata = "gruppo")
+train.data <- training(data_split)
+test.data <- testing(data_split)
+
+```
+```{r dimensioni subset}
+dim(train.data)
+dim(test.data)
+prop.table(table(train.data$gruppo))
+prop.table(table(test.data$gruppo))
+```
+```{r}
+set.seed(123)
+model<-rpart(gruppo ~., data=train.data, method = "class")
+```
+```{r}
+printcp(model)
+summary(model)
+
+```
+```{r plot tree}
+plot(model)
+text(model, use.n=TRUE, all=TRUE, cex=.8)
+```
+```{r predictions}
+predicted.classes<-model%>%
+  predict(test.data, type = "class")
+head(predicted.classes)
+
+```
+```{r accuracy}
+mean(predicted.classes==test.data$gruppo)
+```
+```{r confusion matrix}
+table(test.data$gruppo, predicted.classes)
+confusionMatrix(predicted.classes, test.data$gruppo, positive= "1")
+
+```
+```{r pruning}
+set.seed(123)
+model2<-train(gruppo~., data = train.data, method= "rpart",
+              trControl=trainControl("cv", number = 10),
+              tuneLength=10)
+plot(model2)
+```
+```{r}
+model2$bestTune
+```
+```{r}
+plot(model2$finalModel)
+text(model2$finalModel, digits = 3)
+model2$finalModel
+```
+```{r}
+predicted.classes<-model2%>% predict(test.data)
+mean(predicted.classes==test.data$gruppo)
+
+```
+```{r ROC}
+# Calcolo ROC
+roc_result <- roc(test.data$gruppo, as.numeric(predicted.classes))
+
+# Stampa l'AUC
+print(paste("AUC:", auc(roc_result)))
+
+# Creazione del grafico ROC
+plot(roc_result, main="ROC Curve", col="#1c61b6", lwd=2)
+abline(a=0, b=1, lty=2, col="red")
+
+```
+```{r}
+
+
+# Creare la matrice di confusione
+cm <- confusionMatrix(predicted.classes, test.data$gruppo, positive = "1")
+
+# Estrazione delle metriche dalla matrice di confusione
+overall_stats <- cm$overall
+cm
+# statistiche generali come accuracy e Kappa
+class_stats <- cm$byClass  # statistiche per classe come sensibilità, specificità, ecc.
+
+# Creare un nuovo file Excel e un foglio per le statistiche
+wb <- createWorkbook()
+addWorksheet(wb, "Statistiche Complete  FAMDDT")
+
+# Preparare i dati da scrivere
+metrics <- data.frame(
+  Model = "Decision Tree",
+   Accuracy = overall_stats["Accuracy"],
+  
+  Kappa = overall_stats["Kappa"],
+  
+  Sensitivity = class_stats["Sensitivity"],
+  Specificity = class_stats["Specificity"],
+  
+  `Detection Rate` = class_stats["Detection Rate"],
+  `Detection Prevalence` = class_stats["Detection Prevalence"],
+  `Balanced Accuracy` = class_stats["Balanced Accuracy"],
+  AUC= auc(roc_result)
+)
+
+# Scrivere i dati nel foglio Excel
+writeDataTable(wb, "Statistiche Complete  FAMDDT", metrics, withFilter = TRUE)
+
+# Salvare il file Excel
+saveWorkbook(wb, "Statistiche_Complete_FAMDDT.xlsx", overwrite = TRUE)
+
+```
+
+Modello SVM
+```{r SVM Radial}
+
+set.seed(123)
+model <- train(
+  gruppo ~., data = train.data, method = "svmRadial",
+  trControl = trainControl("cv", number = 10),
+  preProcess = c("center","scale"),
+  tuneLength = 10
+  )
+# Print the best tuning parameter sigma and C that
+# maximizes model accuracy
+model$bestTune
+
+```
+
+```{r predictions e accuracy}
+# Make predictions on the test data
+predicted.classes <- model %>% predict(test.data)
+# Compute model accuracy rate
+mean(predicted.classes == test.data$gruppo)
+```
+```{r}
+table(test.data$gruppo, predicted.classes)
+confusionMatrix(predicted.classes, test.data$gruppo, positive= "1")
+```
+```{r ROC}
+# Calcolo ROC
+roc_result <- roc(test.data$gruppo, as.numeric(predicted.classes))
+
+# Stampa l'AUC
+print(paste("AUC:", auc(roc_result)))
+
+# Creazione del grafico ROC
+plot(roc_result, main="ROC Curve", col="#1c61b6", lwd=2)
+abline(a=0, b=1, lty=2, col="red")
+
+```
+```{r}
+
+
+# Creare la matrice di confusione
+cm <- confusionMatrix(predicted.classes, test.data$gruppo, positive = "1")
+
+# Estrazione delle metriche dalla matrice di confusione
+overall_stats <- cm$overall
+cm
+# statistiche generali come accuracy e Kappa
+class_stats <- cm$byClass  # statistiche per classe come sensibilità, specificità, ecc.
+
+# Creare un nuovo file Excel e un foglio per le statistiche
+wb <- createWorkbook()
+addWorksheet(wb, "Statistiche Complete FAMDSVM")
+
+# Preparare i dati da scrivere
+metrics <- data.frame(
+  Model = "SVM",
+    Accuracy = overall_stats["Accuracy"],
+  
+  Kappa = overall_stats["Kappa"],
+  
+  Sensitivity = class_stats["Sensitivity"],
+  Specificity = class_stats["Specificity"],
+  
+  `Detection Rate` = class_stats["Detection Rate"],
+  `Detection Prevalence` = class_stats["Detection Prevalence"],
+  `Balanced Accuracy` = class_stats["Balanced Accuracy"],
+  AUC= auc(roc_result)
+)
+
+# Scrivere i dati nel foglio Excel
+writeDataTable(wb, "Statistiche Complete FAMDSVM", metrics, withFilter = TRUE)
+
+# Salvare il file Excel
+saveWorkbook(wb, "Statistiche_Complete_FAMDSVM.xlsx", overwrite = TRUE)
+
+```
+
+
+Modello KNN
+
+```{r KNN}
+set.seed(123)
+model <- train(
+  gruppo ~., data = train.data, method = "knn",
+  trControl = trainControl("cv", number = 10),
+  preProcess = c("center","scale"),
+  tuneLength = 20
+  )
+# Plot model accuracy vs different values of k
+plot(model)
+```
+```{r miglior valore k}
+model$bestTune
+```
+```{r predictions}
+predicted.classes <- model %>% predict(test.data)
+head(predicted.classes)
+
+```
+```{r confusion matrix}
+table(test.data$gruppo, predicted.classes)
+confusionMatrix(predicted.classes, test.data$gruppo, positive= "1")
+```
+```{r ROC}
+# Calcolo ROC
+roc_result <- roc(test.data$gruppo, as.numeric(predicted.classes))
+
+# Stampa l'AUC
+print(paste("AUC:", auc(roc_result)))
+
+# Creazione del grafico ROC
+plot(roc_result, main="ROC Curve", col="#1c61b6", lwd=2)
+abline(a=0, b=1, lty=2, col="red")
+
+```
+```{r}
+
+
+# Creare la matrice di confusione
+cm <- confusionMatrix(predicted.classes, test.data$gruppo, positive = "1")
+
+# Estrazione delle metriche dalla matrice di confusione
+overall_stats <- cm$overall
+cm
+# statistiche generali come accuracy e Kappa
+class_stats <- cm$byClass  # statistiche per classe come sensibilità, specificità, ecc.
+
+# Creare un nuovo file Excel e un foglio per le statistiche
+wb <- createWorkbook()
+addWorksheet(wb, "Statistiche Complete FAMDKNN")
+
+# Preparare i dati da scrivere
+metrics <- data.frame(
+  Model = "KNN",
+    Accuracy = overall_stats["Accuracy"],
+  
+  Kappa = overall_stats["Kappa"],
+  
+  Sensitivity = class_stats["Sensitivity"],
+  Specificity = class_stats["Specificity"],
+  
+  `Detection Rate` = class_stats["Detection Rate"],
+  `Detection Prevalence` = class_stats["Detection Prevalence"],
+  `Balanced Accuracy` = class_stats["Balanced Accuracy"],
+  AUC= auc(roc_result)
+)
+
+# Scrivere i dati nel foglio Excel
+writeDataTable(wb, "Statistiche Complete FAMDKNN", metrics, withFilter = TRUE)
+
+# Salvare il file Excel
+saveWorkbook(wb, "Statistiche_Complete_FAMDKNN.xlsx", overwrite = TRUE)
+
+```
+
+
+Modello Random Forest
+
+```{r random forest}
+set.seed(123)
+model <- train(
+  gruppo ~., data = train.data, method = "rf",
+  trControl = trainControl("cv", number = 10),
+  importance = TRUE
+  )
+model$bestTune
+
+```
+```{r modello finale}
+# Final model
+model$finalModel
+```
+```{r predizione}
+# Make predictions on the test data
+predicted.classes <- model %>% predict(test.data)
+head(predicted.classes)
+```
+```{r accurancy}
+mean(predicted.classes == test.data$gruppo)
+```
+```{r confusion matrix}
+table(test.data$gruppo, predicted.classes)
+confusionMatrix(predicted.classes, test.data$gruppo, positive= "1")
+```
+```{r ROC}
+# Calcolo ROC
+roc_result <- roc(test.data$gruppo, as.numeric(predicted.classes))
+
+# Stampa l'AUC
+print(paste("AUC:", auc(roc_result)))
+
+# Creazione del grafico ROC
+plot(roc_result, main="ROC Curve", col="#1c61b6", lwd=2)
+abline(a=0, b=1, lty=2, col="red")
+
+```
+```{r}
+
+
+# Creare la matrice di confusione
+cm <- confusionMatrix(predicted.classes, test.data$gruppo, positive = "1")
+
+# Estrazione delle metriche dalla matrice di confusione
+overall_stats <- cm$overall
+cm
+# statistiche generali come accuracy e Kappa
+class_stats <- cm$byClass  # statistiche per classe come sensibilità, specificità, ecc.
+
+# Creare un nuovo file Excel e un foglio per le statistiche
+wb <- createWorkbook()
+addWorksheet(wb, "Statistiche Complete FAMDRF")
+
+# Preparare i dati da scrivere
+metrics <- data.frame(
+  Model = "Random Forest",
+    Accuracy = overall_stats["Accuracy"],
+  
+  Kappa = overall_stats["Kappa"],
+  
+  Sensitivity = class_stats["Sensitivity"],
+  Specificity = class_stats["Specificity"],
+  
+  `Detection Rate` = class_stats["Detection Rate"],
+  `Detection Prevalence` = class_stats["Detection Prevalence"],
+  `Balanced Accuracy` = class_stats["Balanced Accuracy"],
+  AUC= auc(roc_result)
+)
+
+# Scrivere i dati nel foglio Excel
+writeDataTable(wb, "Statistiche Complete FAMDRF", metrics, withFilter = TRUE)
+
+# Salvare il file Excel
+saveWorkbook(wb, "Statistiche_Complete_FAMDRF.xlsx", overwrite = TRUE)
+
+```
+
+
+Modello GBM
+
+```{r GBM}
+set.seed(123)
+model <- train(
+  gruppo ~., data = train.data, method = "xgbTree",
+  trControl = trainControl("cv", number = 10)
+  )
+
+model$bestTune
+summary(model)
+
+```
+```{r}
+table(test.data$gruppo, predicted.classes)
+confusionMatrix(predicted.classes, test.data$gruppo, positive= "1")
+```
+```{r}
+varImp(model)
+```
+```{r ROC}
+# Calcolo ROC
+roc_result <- roc(test.data$gruppo, as.numeric(predicted.classes))
+
+# Stampa l'AUC
+print(paste("AUC:", auc(roc_result)))
+
+# Creazione del grafico ROC
+plot(roc_result, main="ROC Curve", col="#1c61b6", lwd=2)
+abline(a=0, b=1, lty=2, col="red")
+
+```
+```{r}
+
+
+# Creare la matrice di confusione
+cm <- confusionMatrix(predicted.classes, test.data$gruppo, positive = "1")
+
+# Estrazione delle metriche dalla matrice di confusione
+overall_stats <- cm$overall
+cm
+# statistiche generali come accuracy e Kappa
+class_stats <- cm$byClass  # statistiche per classe come sensibilità, specificità, ecc.
+
+# Creare un nuovo file Excel e un foglio per le statistiche
+wb <- createWorkbook()
+addWorksheet(wb, "Statistiche Complete FAMDGBM")
+
+# Preparare i dati da scrivere
+metrics <- data.frame(
+  Model = "GBM",
+  Accuracy = overall_stats["Accuracy"],
+  
+  Kappa = overall_stats["Kappa"],
+  
+  Sensitivity = class_stats["Sensitivity"],
+  Specificity = class_stats["Specificity"],
+  
+  `Detection Rate` = class_stats["Detection Rate"],
+  `Detection Prevalence` = class_stats["Detection Prevalence"],
+  `Balanced Accuracy` = class_stats["Balanced Accuracy"],
+  AUC= auc(roc_result)
+)
+
+# Scrivere i dati nel foglio Excel
+writeDataTable(wb, "Statistiche Complete FAMDGBM", metrics, withFilter = TRUE)
+
+# Salvare il file Excel
+saveWorkbook(wb, "Statistiche_Complete_FAMDGBM.xlsx", overwrite = TRUE)
+
+```
+
+
+Modello Logistic Regression
+
+```{r}
+# Funzione per normalizzare i dati con min-max
+min_max_normalization <- function(x) {
+  return((x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)))
+}
+
+# Funzione per sostituire gli outlier con la mediana
+replace_outliers_with_median <- function(x) {
+  q1 <- quantile(x, 0.25, na.rm = TRUE)
+  q3 <- quantile(x, 0.75, na.rm = TRUE)
+  iqr <- q3 - q1
+  lower_bound <- q1 - 1.5 * iqr
+  upper_bound <- q3 + 1.5 * iqr
+  
+  # Sostituisce gli outlier con la mediana
+  x[x < lower_bound | x > upper_bound] <- median(x, na.rm = TRUE)
+  return(x)
+}
+
+# Applica la normalizzazione min-max e la sostituzione degli outlier solo alle variabili numeriche
+data_clean <- data %>%
+  mutate(across(where(is.numeric), ~replace_outliers_with_median(.))) 
+
+# Verifica i dati puliti
+print(head(data_clean))
+write.xlsx(data_clean, "data_cleanFAMD.xlsx")
+```
+```{r data split}
+data_clean<- data
+data_clean$Dim.1<- as.numeric(data_clean$Dim.1)
+data_clean$Dim.2<- as.numeric(data_clean$Dim.2)
+data_clean$Dim.3<- as.numeric(data_clean$Dim.3)
+set.seed(42)  # Per riproducibilità
+indexes <- createDataPartition(data_clean$gruppo, p=0.7, list=FALSE)
+train_data <- data_clean[indexes,]
+test_data <- data_clean[-indexes,]
+```
+
+```{r}
+# Fit the model
+fit <- glm(gruppo ~ ., data = train_data, family = binomial())
+
+
+# Summarize the model
+summary(fit)
+
+```
+```{r}
+# Installazione dei pacchetti necessari se non già installati
+if (!require("dplyr")) install.packages("dplyr")
+
+
+# Creazione di un dataframe in R con i dati dei coefficienti del modello GLM
+model_data<- data.frame(
+  Term = c("(Intercept)", "Dim.1", "Dim.2", "Dim.3"),
+  Estimate = c(0.059491, 0.566757, -0.001137, 0.216497),
+  Std_Error = c(0.352903, 0.207573, 0.230739, 0.272159),
+  Z_value = c(0.169, 2.730, -0.005, 0.795),
+  P_value = c(0.86613, "0.00633**", 0.99607, 0.42634)
+)
+# Visualizzazione della tabella
+ft<-flextable(model_data)
+ft<-autofit(ft)
+ft
+save_as_image(ft, "FAMD_RL.png", height= 4,  expand = 5, res = 300)
+```
+
+```{r}
+# Make predictions
+
+predictions <- predict(fit, newdata = test_data, type = "response")
+predicted_class <- ifelse(predictions > 0.5, "1", "0")
+predicted_class <- factor(predicted_class, levels = levels(test_data$gruppo))
+conf_matrix <- table(Predicted = predicted_class, Actual = test_data$gruppo)
+```
+
+
+```{r}
+# Model accuracy
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+```
+
+```{r AUC}
+roc_curve <- roc(test_data$gruppo, predictions)
+auc <- auc(roc_curve)
+
+```
+```{r}
+print(paste("Accuratezza:", accuracy))
+print(paste("AUC:", auc))
+print("Matrice di confusione:")
+print(conf_matrix)
+plot(roc_curve)
+```
+```{r}
+table(test_data$gruppo, predicted_class)
+confusionMatrix(predicted_class, test_data$gruppo, positive= "1")
+```
+```{r}
+# Creare la matrice di confusione
+cm <- confusionMatrix(predicted_class, test_data$gruppo, positive = "1")
+
+# Estrazione delle metriche dalla matrice di confusione
+overall_stats <- cm$overall
+cm
+# statistiche generali come accuracy e Kappa
+class_stats <- cm$byClass  # statistiche per classe come sensibilità, specificità, ecc.
+
+# Creare un nuovo file Excel e un foglio per le statistiche
+wb <- createWorkbook()
+addWorksheet(wb, "Statistiche Complete FAMDLR")
+
+# Preparare i dati da scrivere
+metrics <- data.frame(
+  Model = "Logistic Regression",
+  Accuracy = overall_stats["Accuracy"],
+  
+  Kappa = overall_stats["Kappa"],
+  
+  Sensitivity = class_stats["Sensitivity"],
+  Specificity = class_stats["Specificity"],
+  
+  `Detection Rate` = class_stats["Detection Rate"],
+  `Detection Prevalence` = class_stats["Detection Prevalence"],
+  `Balanced Accuracy` = class_stats["Balanced Accuracy"],
+  AUC= auc
+)
+
+# Scrivere i dati nel foglio Excel
+writeDataTable(wb, "Statistiche Complete FAMDLR", metrics, withFilter = TRUE)
+
+# Salvare il file Excel
+saveWorkbook(wb, "Statistiche_Complete_FAMDLR.xlsx", overwrite = TRUE)
+
+```
+
+Unione delle tabelle dei risultati in un unico file
+
+```{r}
+# Percorsi dei file
+files <- c("Statistiche_Complete_FAMDDT.xlsx",
+          "Statistiche_Complete_FAMDGBM.xlsx",
+          "Statistiche_Complete_FAMDKNN.xlsx",
+          "Statistiche_Complete_FAMDLR.xlsx",
+          "Statistiche_Complete_FAMDRF.xlsx",
+          "Statistiche_Complete_FAMDSVM.xlsx")
+
+# Leggere tutti i file e unirli in un unico DataFrame
+all_data <- lapply(files, read_excel)
+combined_data <- do.call(rbind, all_data)
+combined_data$AUC<- as.numeric(combined_data$AUC)
+# Ordinare i dati per 'Accuracy' in ordine decrescente
+sorted_data <- combined_data %>%
+  mutate_if(is.numeric, round, digits = 3) %>% # Arrotonda tutte le colonne num
+  select(Model, AUC, Accuracy, Kappa, Sensitivity, Specificity) %>% # Seleziona e ordina le
+  arrange(desc(Accuracy)) # Ordina i dati per Accuracy in ordine decrescente
+print(sorted_data)
+#
+ft<-flextable(sorted_data)
+ft<-autofit(ft)
+ft
+save_as_image(ft, "FAMDstat.png", height= 4,  expand = 5, res = 300)
+# Salvare il DataFrame trasposto in un nuovo file Excel
+write_xlsx(sorted_data, "Statistiche_CompleteFAMD.xlsx")
+```
+
+
+
+
+

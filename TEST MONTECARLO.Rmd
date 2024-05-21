@@ -1,0 +1,164 @@
+---
+title: "TEST DI MONTECARLO"
+author: "Datpsy1979"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r test montecarlo}
+library(readxl)
+library(dplyr)
+library(tidyverse)
+library(coin)  # Per il test di Monte Carlo
+
+# Caricamento dei dati da Excel
+dati <- read_excel("tesi finale.xlsx")
+dati
+# Conversione delle colonne a fattori dove appropriato e conteggio dei livelli
+dati <- mutate(dati, across(where(is.character), as.factor))
+
+# Identificazione delle variabili categoriche con più di tre livelli
+multilev <- names(select(dati, where(~is.factor(.) && nlevels(.) > 2)))
+
+# Stampa dei risultati
+print(multilev)
+
+# Esecuzione del test di Monte Carlo per ogni variabile in multilev rispetto alla variabile 'gruppo'
+results <- lapply(multilev, function(var) {
+  tab <- table(dati[[var]], dati$gruppo)  # Creazione della tabella di contingenza
+  test <- coin::chisq_test(tab, distribution = approximate(nresample = 10000))  # Test del chi quadrato con Monte Carlo
+  p_value <- pvalue(test)  # Estrazione del p-value
+  return(c(var, p_value))  # Restituzione del nome della variabile e del p-value
+})
+
+# Stampa dei risultati del test
+results
+
+```
+```{r regressione multinomiale per ogni variabile}
+library(readxl)
+library(nnet)  # Carica nnet per la regressione multinomiale
+
+
+
+# Assicurati che 'gruppo' e le altre variabili siano trattate come fattori
+dati$gruppo <- as.factor(dati$gruppo)
+dati$oct1 <- as.factor(dati$oct1)
+dati$anxt1 <- as.factor(dati$anxt1)
+dati$part1 <- as.factor(dati$part1)
+dati$gsit1 <- as.factor(dati$gsit1)
+
+# Funzione per eseguire e riassumere la regressione logistica multinomiale includendo i valori p
+run_multinom <- function(variable, data) {
+  # Crea la formula e addestra il modello
+  formula <- as.formula(paste(variable, "~ gruppo"))
+  model <- multinom(formula, data = data, trace = FALSE)  # trace = FALSE per evitare output iterativo
+
+  # Organizza il risultato del modello in un formato leggibile
+  tidy_model <- tidy(model, conf.int = TRUE)  # Ottiene coefficienti, errori s# Identifica i coefficienti significativi (p < 0.05)
+  significant_coeffs <- tidy_model %>% filter(p.value < 0.05)
+  
+  # Verifica se ci sono coefficienti significativi e stampa un messaggio
+  if(nrow(significant_coeffs) > 0) {
+    print(paste("Significatività rilevata per la variabile:", variable))
+    print(significant_coeffs)
+  } else {
+    print(paste("Nessuna significatività rilevata per la variabile:", variable))
+  }
+  # Ritorna il risultato
+  return(tidy_model)
+}
+
+# Applicazione della funzione alle variabili
+results_oct1 <- run_multinom("oct1", dati)
+results_anxt1 <- run_multinom("anxt1", dati)
+results_part1 <- run_multinom("part1", dati)
+results_gsit1 <- run_multinom("gsit1", dati)
+
+# Stampa i risultati
+print(results_oct1)
+print(results_anxt1)
+print(results_part1)
+print(results_gsit1)
+levels(dati$part1)
+table(dati$part1)
+
+```
+
+
+```{r grafico part1}
+df<-read.xlsx("Database progetto danza BUONO All 18-05-23 (2) (1).xlsx")
+df$PAR.T1<-as.factor(df$PAR.T1)
+table(df$PAR.T1)
+contingency<- table(df$PAR.T1)
+print(contingency)
+df$GRUPPO <- as.factor(df$GRUPPO)
+names(df) <- make.unique(names(df))
+# Crea il grafico a barre raggruppate
+p<-ggplot(df, aes(x = GRUPPO, fill = PAR.T1)) + 
+  geom_bar(position = "dodge") +
+  labs(x = NULL , y = NULL, fill = "Part1") +
+  theme_minimal() +
+  ggtitle("Part1")+
+  theme(
+    plot.title = element_text(face = "plain", color = "black", family = "serif", size = 16),
+    axis.title.x = element_text(face = "plain", color = "black", family = "serif", size = 16),
+    axis.title.y = element_text(face = "plain", color = "black", family = "serif", size = 16),
+    text = element_text(family = "serif"))#Applica il font serif a tutto il testo nel grafico
+  
+print(p)
+```
+```{r unione livelli part1_reduced}
+library(dplyr)
+names(df)[duplicated(names(df))]
+# Rinominare le colonne duplicati aggiungendo un suffisso incrementale
+names(df) <- make.unique(names(df))
+
+df <- df %>%
+  mutate(part1_reduced = case_when(
+    PAR.T1 %in% c("ASSENTE", "LIEVE") ~ "ASSENTE/LIEVE",
+    PAR.T1 %in% c("MODERATO", "SEVERO") ~ "MODERATO/SEVERO"
+  ))
+
+# Verifica i nuovi conteggi per assicurarti che la combinazione sia stata eseguita correttamente
+table(df$part1_reduced)
+contingency_table_2d <- table(df$part1_reduced, df$GRUPPO)
+print(contingency_table_2d)
+```
+```{r grafico part1_reduced}
+# Caricare il pacchetto ggplot2
+library(ggplot2)
+
+# Assumendo che 'gruppo' sia una colonna nel tuo dataframe 'df' e che 'part1_reduced' sia già stata creata e modificata come discusso
+# Controlla e fattorizza 'gruppo' se non è già un fattore
+df$gruppo <- as.factor(df$GRUPPO)
+
+# Crea il grafico a barre raggruppate
+q<-ggplot(df, aes(x = GRUPPO, fill = part1_reduced)) + 
+  geom_bar(position = "dodge") +
+  labs(x =NULL, y = NULL, fill = "Part1 Reduced") +
+  theme_minimal() +
+  ggtitle("Part1 Reduced")+
+  theme(
+    plot.title = element_text(face = "plain", color = "black", family = "serif", size = 16),
+    axis.title.x = element_text(face = "plain", color = "black", family = "serif", size = 16),
+    axis.title.y = element_text(face = "plain", color = "black", family = "serif", size = 16),
+    text = element_text(family = "serif")# Applica il font serif a tutto il testo nel grafico
+  )
+print(q)
+```
+
+```{r patchwork}
+library(patchwork)
+tot<-p/q+
+  plot_annotation(title = "Distribuzione rispetto a variabile Gruppo")+
+  plot_layout(guides = "collect")
+print(tot)
+ggsave("part1.png", plot = tot, width = 210, height = 105, units = "mm", dpi = 300)
+```
+
